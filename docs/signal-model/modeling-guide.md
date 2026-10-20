@@ -5,6 +5,7 @@
 | 文档 | 内容 |
 |---|---|
 | [`features-and-targets.md`](features-and-targets.md) | 输入变量全表（公式、直觉、经济含义）、经济学概念、预测目标对比 |
+| [`event-arrivals.md`](event-arrivals.md) | 事件到达的分布：泊松为什么不够、ACD、Hawkes、排队模型、下一次中间价变动的时间、怎么接进 hazard |
 | [`ml-pipeline.md`](ml-pipeline.md) | 机器学习路线：逻辑回归 → GBDT → 生存模型；完整 pipeline；指标；超参起点 |
 | [`deep-learning.md`](deep-learning.md) | 深度学习总览：精选模型对比、通用设计、训练指标、和 GBDT 比较、i9 上的训练和推理 |
 | ↳ [DeepLOB](dl/deeplob.md) · [BiN-CTABL](dl/bin-ctabl.md) · [Deep OFI](dl/deep-ofi.md) · [TLOB](dl/tlob.md) · [**OFI-TCN-GRU（推荐）**](dl/ofi-tcn-gru.md) | 每个模型：创新点、数学、逐层结构和参数量、参数怎么选、结果怎么分析、可运行代码 |

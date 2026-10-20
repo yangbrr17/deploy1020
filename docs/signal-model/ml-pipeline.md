@@ -164,6 +164,8 @@ $$
 
 $\mathrm{CIF}_{\uparrow}(j) + \mathrm{CIF}_{\downarrow}(j) + \mathcal{S}(j) = 1$。一个模型覆盖所有格点上的 τ，格点之间插值。
 
+离散 hazard 就是连续时间条件强度在格点上的离散化。它和泊松、ACD、Hawkes、队列耗尽模型的对应关系，以及这些模型的输出怎么当协变量，见 [`event-arrivals.md`](event-arrivals.md) 第 10 节。
+
 **AFT（加速失效时间）**，用于「距下次中间价变化的时间」或「被动单的成交时间」：
 
 $$

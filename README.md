@@ -17,6 +17,7 @@
 |---|---|
 | [`docs/signal-model/modeling-guide.md`](docs/signal-model/modeling-guide.md) | **总览**：问题定义、截面还是时序、输入和输出、ML / DL / RL 三条路线、pipeline、训练指标、先做什么 |
 | [`docs/signal-model/features-and-targets.md`](docs/signal-model/features-and-targets.md) | 输入变量全表（公式、直觉、经济含义）、经济学概念、跨股票标准化、预测目标对比 |
+| [`docs/signal-model/event-arrivals.md`](docs/signal-model/event-arrivals.md) | 订单 / 成交 / 中间价变动的到达分布：泊松、ACD、Hawkes、queue-reactive、队列耗尽时间；检验方法；怎么当特征、基线和模拟器 |
 | [`docs/signal-model/ml-pipeline.md`](docs/signal-model/ml-pipeline.md) | 机器学习路线：逻辑回归 → GBDT → 生存模型；完整 pipeline；指标；LightGBM 超参起点 |
 | [`docs/signal-model/deep-learning.md`](docs/signal-model/deep-learning.md) | 深度学习总览：精选模型对比、通用设计、训练指标、和 GBDT 比较、i9 CPU 上的训练和推理 |
 | [`docs/signal-model/dl/`](docs/signal-model/dl/ofi-tcn-gru.md) | 每个模型一页：[DeepLOB](docs/signal-model/dl/deeplob.md)、[BiN-CTABL](docs/signal-model/dl/bin-ctabl.md)、[Deep OFI](docs/signal-model/dl/deep-ofi.md)、[TLOB](docs/signal-model/dl/tlob.md)、[推荐的 OFI-TCN-GRU](docs/signal-model/dl/ofi-tcn-gru.md)：数学、逐层结构、参数怎么选、怎么分析、可运行代码 |

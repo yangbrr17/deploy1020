@@ -21,6 +21,7 @@ NAV = [
     ("信号建模", [
         ("docs/signal-model/modeling-guide.md", "建模总览：输入、输出、改进路线", 0),
         ("docs/signal-model/features-and-targets.md", "变量与预测目标", 0),
+        ("docs/signal-model/event-arrivals.md", "事件到达：下一笔什么时候来", 0),
         ("docs/signal-model/ml-pipeline.md", "机器学习路线与 pipeline", 0),
         ("docs/signal-model/deep-learning.md", "深度学习：总览与训练", 0),
         ("docs/signal-model/dl/deeplob.md", "DeepLOB", 1),

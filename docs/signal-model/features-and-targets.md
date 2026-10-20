@@ -250,7 +250,7 @@ $$
 T^b = \frac{q^b_1}{\max(\text{depl}^b - \text{add}^b,\ \epsilon)}
 $$
 
-特征 $\log(T^b / T^a)$ 或 $\mathbf{1}[T^a < T^b]$。大 tick 股票的中间价变动 = 某侧队列被耗尽，**哪侧跑得快比哪侧现在短更有信息量**。理论依据：queue-reactive 模型里各类事件的到达强度只依赖当前队列状态（Huang、Lehalle、Rosenbaum 2015）；Cont、Stoikov、Talreja（2010）和 Cont、de Larrard（2013）给出了「给定盘口时中间价上涨的概率」的解析式。这些模型假设事件间隔服从独立指数分布，和实证不符，当特征的启发有用，当精确概率要谨慎。
+特征 $\log(T^b / T^a)$ 或 $\mathbf{1}[T^a < T^b]$。大 tick 股票的中间价变动 = 某侧队列被耗尽，**哪侧跑得快比哪侧现在短更有信息量**。理论依据：queue-reactive 模型里各类事件的到达强度只依赖当前队列状态（Huang、Lehalle、Rosenbaum 2015）；Cont、Stoikov、Talreja（2010）和 Cont、de Larrard（2013）给出了「给定盘口时中间价上涨的概率」的解析式。这些模型假设事件间隔服从独立指数分布，和实证不符，当特征的启发有用，当精确概率要谨慎。完整推导（生灭过程首达时间、平衡时的重尾、先涨概率公式）见 [`event-arrivals.md`](event-arrivals.md) 第 7 节。
 
 ### 4.7 撤单率
 
@@ -280,7 +280,7 @@ C_e(t; \beta) = \sum_{t_i^e < t} e^{-\beta (t - t_i^e)},
 C_e(t_{j}) = e^{-\beta (t_j - t_{j-1})}\Big(C_e(t_{j-1}) + \mathbf{1}[\text{事件 } j-1 \text{ 属于 } e]\Big)
 $$
 
-递推形式是 $O(1)$ 增量更新。特征：$C_{\text{buyMO}}/C_{\text{sellMO}}$，$C_e$ 相对日内同时段均值。
+递推形式是 $O(1)$ 增量更新。特征：$C_{\text{buyMO}}/C_{\text{sellMO}}$，$C_e$ 相对日内同时段均值。Hawkes 的似然、估计、分支比的争论和检验见 [`event-arrivals.md`](event-arrivals.md) 第 5 节。
 
 ### 4.9 波动
 
@@ -300,7 +300,7 @@ $$
 x_i = \psi_i\,\eta_i,\qquad \psi_i = \omega + a\,x_{i-1} + b\,\psi_{i-1},\qquad \eta_i \overset{\text{iid}}{\sim} \text{均值为 1 的正分布}
 $$
 
-特征 $x_i / \psi_i$（意外的快或慢）。成交密集意味着信息到达；中间价很久没动，说明队列长、价格「卡住」。
+特征 $x_i / \psi_i$（意外的快或慢）。成交密集意味着信息到达；中间价很久没动，说明队列长、价格「卡住」。误差分布、季节调整和检验见 [`event-arrivals.md`](event-arrivals.md) 第 4 节。
 
 ### 4.11 日内时段
 
