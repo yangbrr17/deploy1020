@@ -44,12 +44,12 @@ $$
 
 ## 4. 数学
 
-记 $F$ 为输入特征数，$T$ 为序列长度，$H$ 为隐藏维（默认 $H = F$），$L$ 为 block 数，头数 $n_h = 1$。
+记 $F$ 为输入特征数，$T$ 为序列长度，$H$ 为隐藏维（默认 $H = F$），$L$ 为 block 数，头数 $n_h = 1$；第 $\ell$ 个 block 的输出矩阵记为 $Z^{(\ell)}$。
 
 ### 4.1 输入：BiN、嵌入、位置编码
 
 $$
-H^{(0)} = \mathrm{BiN}(X)\,W_e + \mathbf{1}_T b_e^\top + P \in \mathbb{R}^{T \times H},\qquad
+Z^{(0)} = \mathrm{BiN}(X)\,W_e + \mathbf{1}_T b_e^\top + P \in \mathbb{R}^{T \times H},\qquad
 P_{t, 2i} = \sin\frac{t}{10000^{2i/H}},\quad P_{t, 2i+1} = \cos\frac{t}{10000^{2i/H}}
 $$
 
@@ -69,11 +69,11 @@ U = \mathrm{LN}_d\big(\mathrm{Attn}(Z)\,W_0 + Z\big)
 $$
 
 $$
-\mathrm{MLP}_{d \to d'}(U) = \mathrm{GELU}\Big(\mathrm{LN}_{d'}\big(\mathrm{GELU}(U W_1 + b_1)\,W_2 + b_2 + \mathbb{1}[d' = d]\,U\big)\Big),\qquad W_1 \in \mathbb{R}^{d \times 4d},\ W_2 \in \mathbb{R}^{4d \times d'}
+\mathrm{MLP}_{d \to d'}(U) = \mathrm{GELU}\Big(\mathrm{LN}_{d'}\big(\mathrm{GELU}(U W_1 + b_1)\,W_2 + b_2 + \mathbf{1}[d' = d]\,U\big)\Big),\qquad W_1 \in \mathbb{R}^{d \times 4d},\ W_2 \in \mathbb{R}^{4d \times d'}
 $$
 
 $$
-\mathcal{A}_{d \to d'}(Z) = \mathrm{MLP}_{d \to d'}(U) + \mathbb{1}[d' = d]\,Z
+\mathcal{A}_{d \to d'}(Z) = \mathrm{MLP}_{d \to d'}(U) + \mathbf{1}[d' = d]\,Z
 $$
 
 （官方代码里 $W_Q, W_K, W_V$ 之后 `nn.MultiheadAttention` 还有一次内部投影，参数冗余但不影响表达能力；最后的 $+Z$ 是代码特有的第二条残差。）
@@ -81,11 +81,11 @@ $$
 ### 4.3 一个 TLOB block
 
 $$
-\text{时间注意力：}\quad H' = \mathcal{A}^{\text{temp}}_{H \to H_\ell}\big(H^{(\ell-1)}\big)\qquad (\text{token} = T \text{ 个快照，每个 } H \text{ 维})
+\text{时间注意力：}\quad Z' = \mathcal{A}^{\text{temp}}_{H \to H_\ell}\big(Z^{(\ell-1)}\big)\qquad (\text{token} = T \text{ 个快照，每个 } H \text{ 维})
 $$
 
 $$
-\text{特征注意力：}\quad H^{(\ell)} = \Big[\mathcal{A}^{\text{spat}}_{T \to T_\ell}\big(H'^{\top}\big)\Big]^{\top}\qquad (\text{token} = H \text{ 个通道，每个 } T \text{ 维})
+\text{特征注意力：}\quad Z^{(\ell)} = \Big[\mathcal{A}^{\text{spat}}_{T \to T_\ell}\big(Z'^{\top}\big)\Big]^{\top}\qquad (\text{token} = H \text{ 个通道，每个 } T \text{ 维})
 $$
 
 - $\ell < L$ 时 $H_\ell = H$、$T_\ell = T$；最后一个 block 取 $H_L = \lfloor H/4 \rfloor$、$T_L = \lfloor T/4 \rfloor$，这一层的 MLP 兼做降维。
@@ -95,7 +95,7 @@ $$
 ### 4.4 分类头
 
 $$
-z = \operatorname{vec}\big(H^{(L)\top}\big) \in \mathbb{R}^{\lfloor H/4 \rfloor \lfloor T/4 \rfloor}
+z = \operatorname{vec}\big(Z^{(L)\top}\big) \in \mathbb{R}^{\lfloor H/4 \rfloor \lfloor T/4 \rfloor}
 $$
 
 只要维度 $n > 128$ 就接 `Linear(n, n // 4)` + GELU，最后 `Linear(n, 3)` 输出 logits。没有 dropout。

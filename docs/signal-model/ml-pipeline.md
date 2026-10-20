@@ -54,13 +54,13 @@ $$
 \min_{\beta}\ -\frac{1}{\sum_i w_i}\sum_{i} w_i \log P(y_i \mid x_i; \beta) + \lambda\Big(\rho\,\lVert\beta\rVert_1 + \frac{1-\rho}{2}\lVert\beta\rVert_2^2\Big)
 $$
 
-$\rho$（`l1_ratio`）取 0.1–0.5，$\lambda$（即 $1/C$）用 purged CV 选。
+$\rho$（`l1_ratio`）取 0.1–0.5，$\lambda$ 用 purged CV 选（sklearn 的目标是损失之和而不是平均，对应关系是 $\lambda = 1 / (C \sum_i w_i)$）。
 
 **特征映射 $\phi(x)$**：
 
-- 有饱和或 S 形效应的特征（OBI、$\mathrm{OFI}/\mathrm{AD}$、$G^*$）用三次 B 样条展开 $\phi_j(x) = \sum_{r} c_{jr} B_r^{(3)}(x_j)$，5–8 个节点放在分位数上；
+- 有饱和或 S 形效应的特征（OBI、$\mathrm{OFI}/\mathrm{AD}$、$G^*$）用三次 B 样条基展开 $x_j \mapsto \big(B^{(3)}_1(x_j), \dots, B^{(3)}_R(x_j)\big)$，系数并入 $\beta$，5–8 个节点放在分位数上；
 - 其余特征先缩尾到 1% / 99%，再滚动 z-score；
-- 只加少量有先验依据的交互项：$\mathrm{OBI}_1 \times \mathbb{1}[S_{\text{tk}} = 1]$、$\mathrm{OFI}^{\text{short}} \times \sigma$、$\mathrm{OBI}_1 \times \widetilde{\mathrm{Depth}}$、$\mathrm{TI} \times C_{\text{MO}}$。
+- 只加少量有先验依据的交互项：$\mathrm{OBI}_1 \times \mathbf{1}[S_{\text{tk}} = 1]$、$\mathrm{OFI}^{\text{short}} \times \sigma$、$\mathrm{OBI}_1 \times \widetilde{\mathrm{Depth}}$、$\mathrm{TI} \times C_{\text{MO}}$。
 
 **有序 logit**（把 DOWN < NONE < UP 看作同一个潜变量 $y^* = \beta^\top x + \varepsilon$）：
 
@@ -94,16 +94,16 @@ Gould 和 Bonart（2016）只用逻辑回归加一个队列不平衡，在大 ti
 **目标函数**。第 $t$ 棵树 $f_t$ 加到当前模型 $F^{(t-1)}$ 上，对损失做二阶展开（XGBoost / LightGBM 的共同框架）：
 
 $$
-\mathcal{L}^{(t)} \approx \sum_i w_i\Big[g_i f_t(x_i) + \tfrac{1}{2} h_i f_t(x_i)^2\Big] + \gamma T + \tfrac{1}{2}\lambda \sum_{j=1}^{T} v_j^2
+\mathcal{L}^{(t)} \approx \sum_i w_i\Big[g_i f_t(x_i) + \tfrac{1}{2} h_i f_t(x_i)^2\Big] + \gamma \lvert\mathcal{T}\rvert + \tfrac{1}{2}\lambda \sum_{j=1}^{\lvert\mathcal{T}\rvert} v_j^2
 $$
 
-$T$ 是叶子数，$v_j$ 是叶子值。多分类 softmax 下，类 $k$ 的一阶、二阶导数是
+$\lvert\mathcal{T}\rvert$ 是叶子数，$v_j$ 是叶子值。多分类 softmax 下，类 $k$ 的一阶、二阶导数是
 
 $$
-g_{ik} = p_{ik} - \mathbb{1}[y_i = k],\qquad h_{ik} = p_{ik}(1 - p_{ik}),\qquad p_{ik} = \frac{e^{F_k(x_i)}}{\sum_j e^{F_j(x_i)}}
+g_{ik} = p_{ik} - \mathbf{1}[y_i = k],\qquad h_{ik} = p_{ik}(1 - p_{ik}),\qquad p_{ik} = \frac{e^{F_k(x_i)}}{\sum_j e^{F_j(x_i)}}
 $$
 
-（每一轮对每个类各长一棵树。）记叶子 $j$ 里的 $G_j = \sum_{i \in j} w_i g_i$，$H_j = \sum_{i \in j} w_i h_i$，最优叶子值和分裂增益是
+（每一轮对每个类各长一棵树。实现里海森带一个常数：XGBoost 用 $2p(1-p)$，LightGBM 用 $\frac{K}{K-1}p(1-p)$，不影响下面的推导。）记叶子 $j$ 里的 $G_j = \sum_{i \in j} w_i g_i$，$H_j = \sum_{i \in j} w_i h_i$，最优叶子值和分裂增益是
 
 $$
 v_j^* = -\frac{G_j}{H_j + \lambda},
@@ -114,7 +114,7 @@ $$
 **这对参数选择的含义**：
 
 - $\lambda$（`lambda_l2`）把叶子值往 0 收缩，tick 数据噪声大，取 10 左右。
-- `min_sum_hessian_in_leaf` 限制的是 $H_j$，也就是**加权后**的有效样本；`min_data_in_leaf` 数的是行数，不看权重。
+- `min_sum_hessian_in_leaf` 限制的是 $H_j$，也就是叶子里加权的曲率（每个样本最多贡献 $w_i/4$，概率接近 0 或 1 的样本贡献很小），不是样本数；`min_data_in_leaf` 数的是行数，不看权重。
 - 学习率 $\eta$ 让 $F^{(t)} = F^{(t-1)} + \eta f_t$，越小越稳、树越多（延迟越高）。
 
 **LightGBM 起点超参**（百万到千万行、30–80 个特征、三分类、延迟敏感）：
@@ -146,31 +146,31 @@ $$
 
 执行真正关心两件事：「我等的时候价格先往哪边走、多快走」（首达时间 + 竞争风险），和「我挂的单多久能成交，成交前价格会不会先跑」（成交时间 + 删失）。固定 τ 的分类只是生存曲线上的一个截面。
 
-**离散时间竞争风险 hazard（推荐）**。把 $(0, \tau_{\max}]$ 切成 $J$ 段（物理时间，如 0.5、1、2、5、10、30 秒）。第 $l$ 段的条件概率
+**离散时间竞争风险 hazard（推荐）**。把 $(0, \tau_{\max}]$ 切成 $L$ 段，格点 $0 = t_0 < t_1 < \dots < t_L = \tau_{\max}$（物理时间，如 0.5、1、2、5、10、30 秒）。记首达时间为 $T^{\text{hit}}$、事件类型为 $E \in \{\uparrow, \downarrow\}$，第 $l$ 段的条件概率
 
 $$
-h_{\uparrow}(l \mid x) = P(T \in l,\ J = \uparrow \mid T > l - 1,\ x),
+h_{\uparrow}(l \mid x) = P\big(T^{\text{hit}} \in (t_{l-1}, t_l],\ E = \uparrow \mid T^{\text{hit}} > t_{l-1},\ x\big),
 \qquad
-h_{\downarrow}(l \mid x) = P(T \in l,\ J = \downarrow \mid T > l - 1,\ x)
+h_{\downarrow}(l \mid x) = P\big(T^{\text{hit}} \in (t_{l-1}, t_l],\ E = \downarrow \mid T^{\text{hit}} > t_{l-1},\ x\big)
 $$
 
-由一个多分类模型给出：把每个样本展开成「每段一行、直到事件发生或删失」（person-period 格式），目标是 {继续, UP, DOWN}，段号 $l$ 当特征。这个模型的似然恰好等于原问题的离散时间竞争风险似然，所以**直接用 LightGBM 多分类训练就行**。由 hazard 得到生存函数和累积发生函数（CIF）：
+由一个多分类模型给出：把每个样本展开成「每段一行、直到事件发生或删失」（person-period 格式），目标是 {继续, UP, DOWN}，段号 $l$ 当特征。这个模型的似然恰好等于原问题的离散时间竞争风险似然，所以**直接用 LightGBM 多分类训练就行**。由 hazard 得到生存函数和累积发生函数（CIF），在格点 $t_j$ 上：
 
 $$
-S(j \mid x) = \prod_{l \le j}\big(1 - h_{\uparrow}(l) - h_{\downarrow}(l)\big),
+\mathcal{S}(j \mid x) = \prod_{l \le j}\big(1 - h_{\uparrow}(l) - h_{\downarrow}(l)\big),
 \qquad
-\mathrm{CIF}_{\uparrow}(j \mid x) = \sum_{l \le j} h_{\uparrow}(l)\,S(l - 1 \mid x),\quad S(0) = 1
+\mathrm{CIF}_{\uparrow}(j \mid x) = \sum_{l \le j} h_{\uparrow}(l)\,\mathcal{S}(l - 1 \mid x),\quad \mathcal{S}(0) = 1
 $$
 
-$\mathrm{CIF}_{\uparrow}(j) + \mathrm{CIF}_{\downarrow}(j) + S(j) = 1$。一个模型覆盖所有格点上的 τ，格点之间插值。
+$\mathrm{CIF}_{\uparrow}(j) + \mathrm{CIF}_{\downarrow}(j) + \mathcal{S}(j) = 1$。一个模型覆盖所有格点上的 τ，格点之间插值。
 
 **AFT（加速失效时间）**，用于「距下次中间价变化的时间」或「被动单的成交时间」：
 
 $$
-\log T = \beta^\top x + \sigma\,\varepsilon,\qquad \varepsilon \sim \text{正态 / logistic / 极值分布}
+\log T^{\text{hit}} = \beta^\top x + \sigma\,\varepsilon,\qquad \varepsilon \sim \text{正态 / logistic / 极值分布}
 $$
 
-右删失样本的似然用 $P(T > c) = 1 - F_\varepsilon\big((\log c - \beta^\top x)/\sigma\big)$。XGBoost 的 `survival:aft` 把 $\beta^\top x$ 换成树模型（Barnwal 等 2022）。
+右删失样本的似然用 $P(T^{\text{hit}} > c) = 1 - F_\varepsilon\big((\log c - \beta^\top x)/\sigma\big)$。XGBoost 的 `survival:aft` 把 $\beta^\top x$ 换成树模型（Barnwal 等 2022）。
 
 **被动单成交模型**：用「钉在最优价上的虚拟 1 股订单」构造标签：它在队尾进入，按 L3 数据跟踪前方的量，前方量被消耗完之后有成交才算成交；没成交就删失。Lo、MacKinlay、Zhang（2002）发现**用首达时间构造的「假想成交」很难代替真实成交**，所以最终必须用自己的真实子单校准。
 
@@ -265,7 +265,7 @@ flowchart TD
 $$
 \mathcal{T}_i = [t_{i0},\ t_{i0} + \tau],
 \qquad
-c_t = \sum_i \mathbb{1}[t \in \mathcal{T}_i],
+c_t = \sum_i \mathbf{1}[t \in \mathcal{T}_i],
 \qquad
 \bar u_i = \frac{1}{\lvert \mathcal{T}_i \rvert}\sum_{t \in \mathcal{T}_i}\frac{1}{c_t},
 \qquad
@@ -324,12 +324,12 @@ $N = 10$、$k = 2$ 时是 45 个切分、9 条路径。每条路径上算一次�
 
 ### 2.7 校准
 
-**温度缩放**（多分类默认，Guo 等 2017）：在独立的校准窗口上拟合一个标量 $T$：
+**温度缩放**（多分类默认，Guo 等 2017）：在独立的校准窗口上拟合一个标量 $T_{\text{cal}}$：
 
 $$
-\hat p_k(x) = \frac{\exp\big(z_k(x)/T\big)}{\sum_j \exp\big(z_j(x)/T\big)},
+\hat p_k(x) = \frac{\exp\big(z_k(x)/T_{\text{cal}}\big)}{\sum_j \exp\big(z_j(x)/T_{\text{cal}}\big)},
 \qquad
-T^* = \arg\min_{T > 0} -\sum_{i \in \text{cal}} \log \hat p_{y_i}(x_i)
+T_{\text{cal}}^* = \arg\min_{T_{\text{cal}} > 0} -\sum_{i \in \text{cal}} \log \hat p_{y_i}(x_i)
 $$
 
 $z_k$ 是模型的 logit（LightGBM 用 `raw_score=True` 取）。它不改变各类的排序，只调整置信度。
@@ -484,14 +484,14 @@ $\mathrm{LL}_{\text{ref}}$ 默认用训练期的类频率（无条件先验）$\
 **Brier score** 和它的分解（$K$ 类）：
 
 $$
-\mathrm{BS} = \frac{1}{n}\sum_i\sum_{k=1}^{K}\big(\hat p_{ik} - \mathbb{1}[y_i = k]\big)^2
+\mathrm{BS} = \frac{1}{n}\sum_i\sum_{k=1}^{K}\big(\hat p_{ik} - \mathbf{1}[y_i = k]\big)^2
 = \underbrace{\text{可靠性}}_{\text{越小越好}} - \underbrace{\text{分辨率}}_{\text{越大越好}} + \underbrace{\text{不确定性}}_{\text{和模型无关}}
 $$
 
 **classwise-ECE**（等频分箱 $B_1, \dots, B_M$）：
 
 $$
-\mathrm{ECE}_{\text{cw}} = \frac{1}{K}\sum_{k=1}^{K}\sum_{m=1}^{M}\frac{\lvert B_m \rvert}{n}\Big\lvert \overline{\hat p_k}(B_m) - \overline{\mathbb{1}[y = k]}(B_m)\Big\rvert
+\mathrm{ECE}_{\text{cw}} = \frac{1}{K}\sum_{k=1}^{K}\sum_{m=1}^{M}\frac{\lvert B_m \rvert}{n}\Big\lvert \overline{\hat p_k}(B_m) - \overline{\mathbf{1}[y = k]}(B_m)\Big\rvert
 $$
 
 **多分类 MCC**（混淆矩阵 $C$，$t_k$ 是类 $k$ 的真实数，$p_k$ 是预测数，$c$ 是对的个数，$n$ 是总数）：
@@ -516,8 +516,9 @@ proper 评分规则的含义：只有报出真实概率 $p$ 才能让期望得�
 
 | 指标 | 定义（买单 $d = +1$，卖单 $d = -1$） | 用途 |
 |---|---|---|
-| Markout | $\mathrm{MO}_h = d\,\dfrac{m_{t+h} - p_{\text{fill}}}{m_t}\times 10^4$，$h \in \{1, 5, 30\}$ 秒 | 子单质量 |
-| 逆向选择 | $\mathrm{AS}_h = -d\,\dfrac{m_{t+h} - m_t}{m_t}\times 10^4$（$m_t$ 是成交时刻的中间价）；被动成交时 $\mathrm{MO}_h = \text{价差捕获} - \mathrm{AS}_h$ | markout 为负说明逆向选择超过了赚到的半个价差 |
+| Markout | $\mathrm{MO}_h = d\,\dfrac{m_{t_f+h} - p_{\text{fill}}}{m_{t_f}}\times 10^4$，$t_f$ 是成交时刻，$h \in \{1, 5, 30\}$ 秒 | 子单质量 |
+| 价差捕获 | $\mathrm{SC} = d\,\dfrac{m_{t_f} - p_{\text{fill}}}{m_{t_f}}\times 10^4$（被动成交约为半个价差，吃单约为负半个价差） | |
+| 逆向选择 | $\mathrm{AS}_h = -d\,\dfrac{m_{t_f+h} - m_{t_f}}{m_{t_f}}\times 10^4$，于是 $\mathrm{MO}_h = \mathrm{SC} - \mathrm{AS}_h$ | markout 为负说明逆向选择超过了赚到的半个价差 |
 | Implementation shortfall | $d\,\dfrac{\overline{p}_{\text{exec}} - m_{\text{arrival}}}{m_{\text{arrival}}}$ + 未完成部分的机会成本 | 母单级；方差大，对照试验里当护栏 |
 | 加权命中率 | $\dfrac{\sum_i \operatorname{sign}(\hat y_i)\,\Delta m_i}{\sum_i \lvert\Delta m_i\rvert}$ | 比命中率更接近 PnL |
 | **信号十分位图** | 按 $p_\uparrow - p_\downarrow$ 分十组，看每组未来 $\Delta m / \delta$ 的均值 | **最直观的诊断**：应当单调，两端幅度要大于半个价差 |

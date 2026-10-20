@@ -146,7 +146,7 @@ flowchart LR
 ### 5.1 机器学习怎么改（详见 [`ml-pipeline.md`](ml-pipeline.md)）
 
 1. **先换标签，再换特征，最后换模型**，四组对比：旧特征旧标签 → 旧特征新标签 → 新特征新标签（样条 LR）→ 新特征新标签（GBDT）。后两步分别度量特征和模型带来的增益；log loss 只在同一个标签内比较。
-2. **强基线**：样条 + 少量有依据的交互项（$\mathrm{OBI} \times \mathbb{1}[S_{\text{tk}} = 1]$、$\mathrm{OFI} \times \sigma$）+ 弹性网的多项 logit。GBDT 必须明确跑赢它。
+2. **强基线**：样条 + 少量有依据的交互项（$\mathrm{OBI} \times \mathbf{1}[S_{\text{tk}} = 1]$、$\mathrm{OFI} \times \sigma$）+ 弹性网的多项 logit。GBDT 必须明确跑赢它。
 3. **主力**：LightGBM 多分类，按唯一性加权（不加类权重，不按 $\lvert\Delta m\rvert$ 加权），早停盯加权 log loss；在独立窗口上做温度缩放校准。
 4. **两阶段可选**：$P(\text{动}) \cdot P(\text{涨} \mid \text{动})$，「会不会动」由波动和强度驱动，「往哪动」由 OBI / OFI 驱动。
 5. **第二个模型**：离散时间竞争风险 hazard（一个模型覆盖所有 τ）+ 被动单成交生存模型。

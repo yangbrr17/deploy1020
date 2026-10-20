@@ -16,7 +16,7 @@ Zhang、Zohren、Roberts（IEEE TSP 2019），arXiv:1808.03668；多步变体 Zh
 |---|---|
 | 只用原始 10 档价量 | 不依赖手工特征，由数据学 |
 | 第 1 层卷积 $1 \times 2$、步长 $1 \times 2$ | 把每档的 $(p^{(i)}, v^{(i)})$ 配对汇总。不用步长的话，同一组参数会同时作用于 $(p^{(i)}, v^{(i)})$ 和 $(v^{(i)}, p^{(i+1)})$，含义错乱 |
-| 第 2 个 $1 \times 2$、步长 $1 \times 2$ | 把同一档的卖方和买方合并，作者类比为「对每一档算一个 microprice」：$p^{\text{micro}} = I\,p_a + (1 - I)\,p_b$，$I = \frac{v_b}{v_a + v_b}$ |
+| 第 2 个 $1 \times 2$、步长 $1 \times 2$ | 把同一档的卖方和买方合并，作者类比为「对每一档算一个 microprice」，其实是加权中间价 $M^w = I\,p_a + (1 - I)\,p_b$，$I = \frac{v_b}{v_a + v_b}$（和 Stoikov 的 microprice 不是一回事，见 [`features-and-targets.md`](../features-and-targets.md) 3.3 节） |
 | $1 \times 10$ 卷积 | 把 10 档整合成 1 列 |
 | $4 \times 1$ 时间卷积 | 等价于 FIR 滤波器 $y(n) = \sum_{k=0}^{M} b_k\,x(n-k)$，做可学习的平滑 |
 | 卷积块不用池化 | 实验显示池化会欠拟合 |
@@ -50,10 +50,10 @@ $$
 $$
 \text{FI-2010：}\ l_t = \frac{m_+(t) - p_t}{p_t},\qquad
 \text{LSE：}\ l_t = \frac{m_+(t) - m_-(t)}{m_-(t)},\qquad
-y_t = \begin{cases} +1 & l_t > \alpha \\ -1 & l_t < -\alpha \\ 0 & \text{其他} \end{cases}
+y_t = \begin{cases} +1 & l_t > \theta_{\text{lab}} \\ -1 & l_t < -\theta_{\text{lab}} \\ 0 & \text{其他} \end{cases}
 $$
 
-FI-2010 用 $\alpha = 0.002$；LSE 的 $\alpha$ 按训练集类别平衡选（如某只股票在 $k = 20/50/100$ 时为 $0.25/0.50/0.75 \times 10^{-4}$）。原论文 $m_-$ 的公式有 $k+1$ 项却除以 $k$，是笔误。
+FI-2010 用 $\theta_{\text{lab}} = 0.002$；LSE 的 $\theta_{\text{lab}}$ 按训练集类别平衡选（如某只股票在 $k = 20/50/100$ 时为 $0.25/0.50/0.75 \times 10^{-4}$）。原论文 $m_-$ 的公式有 $k+1$ 项却除以 $k$，是笔误。
 
 **我们的看法**：LSE 版本的 $m_-$ 正好是输入窗口里过去价格的平均，标签有一部分是「过去的趋势」，准确率会虚高（Lucchese 等的批评）。我们用首达三分类。
 
@@ -98,7 +98,7 @@ $$
 \theta \leftarrow \theta - \eta\,\frac{\hat m}{\sqrt{\hat v} + \epsilon}
 $$
 
-当梯度量级远小于 1 时 $\sqrt{\hat v} \ll 1$，更新约为 $\eta\,\hat m$，**相当于学习率 0.01 的动量 SGD**。官方代码用的是学习率 $10^{-4}$、默认 $\epsilon \approx 10^{-7}$，两者实际步长可能差几个数量级。复现时不能只抄学习率。
+当梯度量级远小于 1 时 $\sqrt{\hat v} \ll 1$，更新约为 $\eta\,\hat m$，**相当于动量 SGD**：$\hat m$ 是梯度的指数平均（$\beta_1 = 0.9$），换成经典的重球法写法 $v \leftarrow 0.9\,v + g,\ \theta \leftarrow \theta - \eta(1 - \beta_1)\,v$，等效学习率是 $0.01 \times 0.1 = 10^{-3}$（忽略偏差修正）。官方代码用的是学习率 $10^{-4}$、默认 $\epsilon \approx 10^{-7}$，两者实际步长可能差几个数量级。复现时不能只抄学习率。
 
 ## 5. 结构和参数量
 

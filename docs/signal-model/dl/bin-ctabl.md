@@ -21,7 +21,7 @@ Tran、Iosifidis、Kanniainen、Gabbouj（TABL，IEEE TNNLS 2019）；Tran、Kan
 
 - **张量**：$X \in \mathbb{R}^{D \times T}$，$D = 40$（10 档 × {卖价, 卖量, 买价, 买量}），$T = 10$（最近 10 个快照；FI-2010 每 10 个事件一个快照，所以覆盖约 100 个事件）。只用 40 维原始盘口，不用数据集里另外 104 维手工特征。
 - **数据集里的批张量**是 `(B, T, D)`，进模型前转置成 `(B, D, T)`。
-- **标签**：FI-2010 自带的平滑标签（见 [`features-and-targets.md`](../features-and-targets.md) 7.1 节 (C)），$\theta = 0.002$，$k \in \{1, 2, 3, 5, 10\}$ 对应 10–100 个事件。**我们不用这个标签**，改用首达三分类（见第 9 节）。
+- **标签**：FI-2010 自带的平滑标签（见 [`features-and-targets.md`](../features-and-targets.md) 7.1 节 (C)），$\theta_{\text{lab}} = 0.002$，$k \in \{1, 2, 3, 5, 10\}$ 对应 10–100 个事件。**我们不用这个标签**，改用首达三分类（见第 9 节）。
 
 ## 4. 数学
 

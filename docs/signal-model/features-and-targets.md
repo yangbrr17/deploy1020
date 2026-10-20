@@ -56,7 +56,7 @@ $$
 $$
 \mathrm{OBI}_K = \frac{\sum_{k=1}^{K} w_k\,(q^b_k - q^a_k)}{\sum_{k=1}^{K} w_k\,(q^b_k + q^a_k)},
 \qquad
-w_k = e^{-\lambda (k-1)} \ \text{或}\ w_k = 1/k
+w_k = e^{-\omega (k-1)} \ \text{或}\ w_k = 1/k
 $$
 
 按价格距离加权（小 tick 股票推荐，因为档位之间可能有空价位）：
@@ -86,31 +86,31 @@ $$
 **Stoikov 的 microprice** 定义为未来中间价的极限条件期望：
 
 $$
-P^{\text{micro}}_t = \lim_{i \to \infty} \mathbb{E}\big[m_{\tau_i} \mid \mathcal{F}_t\big] = m_t + \sum_{i \ge 1} g_i(I_t, S_t)
+P^{\text{micro}}_t = \lim_{i \to \infty} \mathbb{E}\big[m_{\vartheta_i} \mid \mathcal{F}_t\big] = m_t + \sum_{i \ge 1} g_i(I_t, S_t)
 $$
 
-$\tau_i$ 是第 $i$ 次中间价变动的时刻。假设动力学只依赖状态 $X = (I, S)$、和价格水平无关，把 $I$ 分成 $n$ 箱、$S$ 取 $m$ 个值，估计三个矩阵：
+$\vartheta_i$ 是第 $i$ 次中间价变动的时刻。假设动力学只依赖状态 $X = (I, S)$、和价格水平无关，把 $I$ 分成 $n_I$ 箱、$S$ 取 $n_S$ 个值，估计三个矩阵：
 
 - $Q$：中间价**不变**时的状态转移矩阵；
-- $R_1$：从各状态出发、中间价变动 $\Delta M$ 的概率；$K$ 是 $\Delta M$ 的取值向量（如 $\pm\delta/2, \pm\delta$）；
+- $R_1$：从各状态出发、中间价变动 $\Delta M$ 的概率；$\mathbf{k}$ 是 $\Delta M$ 的取值向量（如 $\pm\delta/2, \pm\delta$）；
 - $R_2$：中间价**变动后**新状态的转移矩阵。
 
 $$
-g_1 = (\mathbf{I} - Q)^{-1} R_1 K,
+g_1 = (\mathbf{I} - Q)^{-1} R_1 \mathbf{k},
 \qquad
 B = (\mathbf{I} - Q)^{-1} R_2,
 \qquad
 g_{i+1} = B\,g_i
 $$
 
-（$\mathbf{I}$ 是单位矩阵。）估计前把样本按 $(I, S, \Delta M) \mapsto (1 - I, S, -\Delta M)$ 镜像扩充，使 $g(I, S) = -g(1 - I, S)$，保证 $B^i g_1 \to 0$、级数收敛；实际截断到 $i \approx 6$。特征用 $G^* = (P^{\text{micro}} - m)/\delta$。
+（$\mathbf{I}$ 是单位矩阵。）$\sum_{i \ge 1} g_i = \sum_{i \ge 0} B^i g_1$ 收敛需要两个条件：$B^i \to B^*$（状态链遍历）和 $B^* g_1 = 0$。估计前把样本按 $(I, S, \Delta M) \mapsto (1 - I, S, -\Delta M)$ 镜像扩充，使 $g(I, S) = -g(1 - I, S)$，这保证了第二个条件。实际截断到 $i \approx 6$。特征用 $G^* = (P^{\text{micro}} - m)/\delta$。
 
 - 它把不平衡和价差映射成「以价格计的预期漂移」，**可以直接和吃单成本 $S/2 + f_t$ 比较**。
 - $G^*$ 本身是强特征，也是一个基线模型；有研究在部分市场没复现出它的优势，要在自己的数据上验证。
 
 ### 3.4 价差
 
-$S_{\text{tk}}$、$\mathbb{1}[S_{\text{tk}} = 1]$、$S_{\text{tk}}$ 相对日内同时段均值、窗口内 $S_{\text{tk}} = 1$ 的时间占比。既是特征，也是**条件变量**：模型按 $S_{\text{tk}} = 1$ 和 $S_{\text{tk}} > 1$ 分段或交互。大 tick 股票的价差被「钉」在 1 档，真实的隐含价差小于 1 档（Dayri 和 Rosenbaum 2015）。
+$S_{\text{tk}}$、$\mathbf{1}[S_{\text{tk}} = 1]$、$S_{\text{tk}}$ 相对日内同时段均值、窗口内 $S_{\text{tk}} = 1$ 的时间占比。既是特征，也是**条件变量**：模型按 $S_{\text{tk}} = 1$ 和 $S_{\text{tk}} > 1$ 分段或交互。大 tick 股票的价差被「钉」在 1 档，真实的隐含价差小于 1 档（Dayri 和 Rosenbaum 2015）。
 
 ### 3.5 深度
 
@@ -142,8 +142,8 @@ Briola 等（2025）按 $\overline{S}_{\text{tk}}$ 分组：$\lesssim 1.5$ 为�
 单个事件 $n$ 对最优档的贡献：
 
 $$
-e_n = q^b_1(n)\,\mathbb{1}\big[P^b_1(n) \ge P^b_1(n-1)\big] - q^b_1(n-1)\,\mathbb{1}\big[P^b_1(n) \le P^b_1(n-1)\big]
-- q^a_1(n)\,\mathbb{1}\big[P^a_1(n) \le P^a_1(n-1)\big] + q^a_1(n-1)\,\mathbb{1}\big[P^a_1(n) \ge P^a_1(n-1)\big]
+e_n = q^b_1(n)\,\mathbf{1}\big[P^b_1(n) \ge P^b_1(n-1)\big] - q^b_1(n-1)\,\mathbf{1}\big[P^b_1(n) \le P^b_1(n-1)\big]
+- q^a_1(n)\,\mathbf{1}\big[P^a_1(n) \le P^a_1(n-1)\big] + q^a_1(n-1)\,\mathbf{1}\big[P^a_1(n) \ge P^a_1(n-1)\big]
 $$
 
 窗口内求和：$\mathrm{OFI}(t-h, t] = \sum_{n \in (t-h, t]} e_n$。
@@ -152,12 +152,12 @@ $$
 - **价格冲击关系**（同期）：
 
 $$
-\Delta m_k = \beta\,\mathrm{OFI}_k + \epsilon_k,
+\Delta m_j = \beta^{\text{OFI}}\,\mathrm{OFI}_j + \epsilon_j,
 \qquad
-\beta \approx \frac{c}{\mathrm{AD}}
+\beta^{\text{OFI}} \approx \frac{c}{\mathrm{AD}}
 $$
 
-$\mathrm{AD}$ 是平均深度。斜率和深度成反比，这就是 Kyle $\lambda$（4.12 节）的微观对应。所以 $\mathrm{OFI}/\mathrm{AD}$ 跨股票可比。基于成交量的价量关系噪声更大。
+$j$ 是第 $j$ 个时间区间，$\mathrm{AD}$ 是平均深度。斜率和深度成反比，这就是 Kyle $\lambda$（6.1 节）的微观对应。所以 $\mathrm{OFI}/\mathrm{AD}$ 跨股票可比。基于成交量的价量关系噪声更大。
 
 - **注意**：这是**同期**回归，不是预测。
 
@@ -197,7 +197,7 @@ Q^{(M)} = \frac{1}{M}\sum_{\ell=1}^{M} \frac{1}{2\,\Delta N}\sum_{n}\big(q^b_\el
 \mathrm{ofi}^{I} = \frac{w_1^\top \mathbf{ofi}}{\lVert w_1 \rVert_1}
 $$
 
-$w_1$ 是历史上多档 $\mathbf{ofi}$ 向量协方差矩阵的第一主成分。
+$\Delta N$ 是窗口内的事件数，$w_1$ 是历史上多档 $\mathbf{ofi}$ 向量协方差矩阵的第一主成分。
 
 - 多档 OFI 高度相关，第一主成分解释 89% 以上的方差。同期 $R^2$（样本外）：最优档 64.6%，integrated OFI 83.8%。
 - **预测场景下，integrated OFI 没有显著好于最优档 OFI**。作者推测主成分丢了「档位距离」的信息。所以预测时把各档 $\mathrm{ofi}_\ell$ 分开输入，让模型自己学权重。
@@ -222,7 +222,7 @@ $$
 \qquad
 \mathrm{TI}^{\text{norm}} = \frac{V^{\text{buy}} - V^{\text{sell}}}{V^{\text{buy}} + V^{\text{sell}}},
 \qquad
-\mathrm{TI}^{\sqrt{}} = \sum_i \varepsilon_i \sqrt{v_i}
+\mathrm{TI}^{(1/2)} = \sum_i \varepsilon_i\, v_i^{1/2}
 $$
 
 $$
@@ -250,7 +250,7 @@ $$
 T^b = \frac{q^b_1}{\max(\text{depl}^b - \text{add}^b,\ \epsilon)}
 $$
 
-特征 $\log(T^b / T^a)$ 或 $\mathbb{1}[T^a < T^b]$。大 tick 股票的中间价变动 = 某侧队列被耗尽，**哪侧跑得快比哪侧现在短更有信息量**。理论依据：queue-reactive 模型里各类事件的到达强度只依赖当前队列状态（Huang、Lehalle、Rosenbaum 2015）；Cont、Stoikov、Talreja（2010）和 Cont、de Larrard（2013）给出了「给定盘口时中间价上涨的概率」的解析式。这些模型假设事件间隔服从独立指数分布，和实证不符，当特征的启发有用，当精确概率要谨慎。
+特征 $\log(T^b / T^a)$ 或 $\mathbf{1}[T^a < T^b]$。大 tick 股票的中间价变动 = 某侧队列被耗尽，**哪侧跑得快比哪侧现在短更有信息量**。理论依据：queue-reactive 模型里各类事件的到达强度只依赖当前队列状态（Huang、Lehalle、Rosenbaum 2015）；Cont、Stoikov、Talreja（2010）和 Cont、de Larrard（2013）给出了「给定盘口时中间价上涨的概率」的解析式。这些模型假设事件间隔服从独立指数分布，和实证不符，当特征的启发有用，当精确概率要谨慎。
 
 ### 4.7 撤单率
 
@@ -277,7 +277,7 @@ $$
 $$
 C_e(t; \beta) = \sum_{t_i^e < t} e^{-\beta (t - t_i^e)},
 \qquad
-C_e(t_{j}) = e^{-\beta (t_j - t_{j-1})}\,C_e(t_{j-1}) + \mathbb{1}[\text{事件 } j \text{ 属于 } e]
+C_e(t_{j}) = e^{-\beta (t_j - t_{j-1})}\Big(C_e(t_{j-1}) + \mathbf{1}[\text{事件 } j-1 \text{ 属于 } e]\Big)
 $$
 
 递推形式是 $O(1)$ 增量更新。特征：$C_{\text{buyMO}}/C_{\text{sellMO}}$，$C_e$ 相对日内同时段均值。
@@ -310,7 +310,7 @@ $$
 
 | 变量 | 定义 | 用法 |
 |---|---|---|
-| Kyle $\lambda$ | 滚动回归 $\Delta m = c + \lambda\,\mathrm{TI} + \epsilon$，或 $\Delta m = c + \beta\,\mathrm{OFI} + \epsilon$ | 状态变量；和 OFI 交互（$\mathrm{OFI} \times \hat\lambda$ ≈ 预期冲击） |
+| Kyle $\lambda$ | 滚动回归 $\Delta m = c + \lambda\,\mathrm{TI} + \epsilon$，或 $\Delta m = c + \beta^{\text{OFI}}\,\mathrm{OFI} + \epsilon$ | 状态变量；和 OFI 交互（$\mathrm{OFI} \times \hat\lambda$ ≈ 预期冲击） |
 | Amihud | $\mathrm{ILLIQ} = \operatorname{mean}_d \big(\lvert r_d \rvert / \text{成交额}_d\big)$ | 跨股票分组和标准化 |
 | VPIN | $\mathrm{VPIN} = \frac{1}{nV}\sum_{\tau=1}^{n} \lvert V^{\text{sell}}_\tau - V^{\text{buy}}_\tau \rvert$（成交量桶） | **有争议**（Andersen 和 Bondarenko 2014），秒级信号价值有限 |
 
@@ -391,7 +391,7 @@ $\sigma_D$ 是日波动，$V_D$ 是日成交量。
 - 冲击是瞬时的、会衰减（传播子模型，Bouchaud 等 2004）：
 
 $$
-m_t = m_{-\infty} + \sum_{s < t} G(t - s)\,\varepsilon_s\,f(v_s) + \text{噪声},\qquad G(\ell) \sim \ell^{-\gamma}
+m_t = m_{-\infty} + \sum_{u < t} G(t - u)\,\varepsilon_u\,f(v_u) + \text{噪声},\qquad G(\ell) \sim \ell^{-\beta_G}
 $$
 
 **指导**：短 horizon 用线性 OFI，长窗口用 $\varepsilon\sqrt{v}$ 之类的凹变换；**训练数据里的 OFI 不含自己的冲击，上线后要扣除**；执行速度要同时考虑信号带来的 alpha 和冲击成本。
@@ -404,7 +404,7 @@ $$
 C(\ell) = \mathbb{E}[\varepsilon_t\,\varepsilon_{t+\ell}] \sim c\,\ell^{-\gamma},\qquad \gamma \approx 0.6 < 1
 $$
 
-$\sum_\ell C(\ell)$ 发散，这是长记忆，主要来自大单拆分执行。但价格接近随机游走，因为流动性做了反向调整（传播子 $G$ 的衰减正好抵消了符号的持续性）。**「下一笔成交方向」高度可预测，但这不等于价格可预测**，这正是旧标签的陷阱。
+$\sum_\ell C(\ell)$ 发散，这是长记忆，主要来自大单拆分执行。但价格接近随机游走，因为流动性做了反向调整：传播子 $G(\ell) \sim \ell^{-\beta_G}$ 的衰减正好抵消了符号的持续性，要让价格扩散，两个指数需满足 $\beta_G = \frac{1 - \gamma}{2} \approx 0.2$（Bouchaud 等 2004）。**「下一笔成交方向」高度可预测，但这不等于价格可预测**，这正是旧标签的陷阱。
 
 ### 6.5 价格发现
 
@@ -447,8 +447,8 @@ $$
 $$
 m^+_t = \frac{1}{k}\sum_{i=1}^{k} m_{t+i},\qquad
 l_t = \frac{m^+_t - m_t}{m_t},\qquad
-y_t = \begin{cases} +1 & l_t > \alpha \\ -1 & l_t < -\alpha \\ 0 & \text{其他} \end{cases}
-\qquad (\alpha = 0.002)
+y_t = \begin{cases} +1 & l_t > \theta_{\text{lab}} \\ -1 & l_t < -\theta_{\text{lab}} \\ 0 & \text{其他} \end{cases}
+\qquad (\theta_{\text{lab}} = 0.002)
 $$
 
 **(D) 三重障碍**：上障碍 $m_t + b\delta$，下障碍 $m_t - b\delta$（$b$ 默认 1），时间障碍 $t + \tau$：
@@ -462,12 +462,12 @@ $$
 **(E) 首达时间 / 竞争风险**：$T = \min(\tau^\uparrow, \tau^\downarrow) - t$，事件类型 $J \in \{\uparrow, \downarrow\}$，在 $\tau_{\max}$ 处删失。建模 cause-specific hazard 和累积发生函数：
 
 $$
-h_j(s \mid x) = \lim_{\Delta \to 0}\frac{P(s \le T < s + \Delta,\ J = j \mid T \ge s, x)}{\Delta},
+h_j(u \mid x) = \lim_{\Delta \to 0}\frac{P(u \le T < u + \Delta,\ J = j \mid T \ge u, x)}{\Delta},
 \qquad
-\mathrm{CIF}_j(\tau \mid x) = P(T \le \tau,\ J = j \mid x) = \int_0^\tau h_j(s \mid x)\,S(s^- \mid x)\,ds
+\mathrm{CIF}_j(\tau \mid x) = P(T \le \tau,\ J = j \mid x) = \int_0^\tau h_j(u \mid x)\,\mathcal{S}(u^- \mid x)\,du
 $$
 
-$S(s \mid x) = \exp\big(-\int_0^s (h_\uparrow + h_\downarrow)\big)$ 是「还没触达」的概率。离散时间版本见 [`ml-pipeline.md`](ml-pipeline.md) 1.5 节。
+$\mathcal{S}(u \mid x) = \exp\big(-\int_0^u (h_\uparrow + h_\downarrow)\big)$ 是「还没触达」的概率。离散时间版本见 [`ml-pipeline.md`](ml-pipeline.md) 1.5 节。
 
 **(F) 幅度（hurdle 结构）**：
 
@@ -475,9 +475,9 @@ $$
 P(\Delta = j) = P(\text{动}) \cdot P(\text{方向} \mid \text{动}) \cdot P\big(\lvert\Delta\rvert = j \mid \text{动}, \text{方向}\big),\qquad j \in \{1, 2, \ge 3\} \text{ tick}
 $$
 
-**(G) 分位数**：$q_\alpha\big(m_{t+h} - m_t \mid x\big)$，用 pinball loss $\ell_\alpha(e) = \max(\alpha e, (\alpha - 1)e)$ 训练。
+**(G) 分位数**：$Q_{\alpha}\big(m_{t+h} - m_t \mid x\big)$，用 pinball loss $\ell_\alpha(e) = \max(\alpha e, (\alpha - 1)e)$ 训练（$\alpha$ 是分位数水平）。
 
-**(H) Markout**：$d\,(m_{t_{\text{fill}} + h} - p_{\text{fill}})/\delta$。
+**(H) Markout**：$d\,(m_{t_f + h} - p_{\text{fill}})/\delta$，$t_f$ 是成交时刻（以 tick 计；以基点计的版本见 [`ml-pipeline.md`](ml-pipeline.md) 3.2 节）。
 
 ### 7.2 对比
 
@@ -496,7 +496,7 @@ $$
 
 文献指出的：
 
-1. **阈值不是按经济含义选的**，是为了平衡类别（LOBCAST 原文）。同一个 $\alpha$ 只在 $k = 5$ 时类别平衡。
+1. **阈值不是按经济含义选的**，是为了平衡类别（LOBCAST 原文）。同一个 $\theta_{\text{lab}}$ 只在 $k = 5$ 时类别平衡。
 2. **类别分布对 horizon 极其敏感**：$k = 1$ 时上 / 平 / 下 = 18 / 63 / 19，$k = 10$ 时 37 / 25 / 38。改 $k$ 实际上是在改问题。
 3. **只平滑未来**会让信号不一致，用于交易会产生冗余交易（DeepLOB 原文，因此 DeepLOB 改用 $l_t = (m^+_t - m^-_t)/m^-_t$，$m^-_t$ 是过去 $k$ 个中间价的均值）。
 4. **刻画的是趋势，实用性存疑**；高预测精度不等于可执行信号（Briola 等 2025）。
@@ -506,14 +506,14 @@ $$
 
 6. 用 $m^-_t$ 的版本里，过去均值和特征窗口完全重叠，标签的一部分是「过去 $k$ 步的趋势」，准确率虚高，对「从现在起」的交易没有价值。
 7. 相邻样本的标签共享未来价格，必须 purge 和 embargo，按日前向滚动。
-8. 阈值用收益率表示，跨股票不可比：同样的 $\alpha$ 对低价股可能小于 1 tick。用 tick 或 $\sigma$ 做单位。
+8. 阈值用收益率表示，跨股票不可比：同样的 $\theta_{\text{lab}}$ 对低价股可能小于 1 tick。用 tick 或 $\sigma$ 做单位。
 
 ### 7.4 对当前方案（中间价三重障碍、幅度另建模、涨跌分开）的具体建议
 
 1. **障碍以中间价为基准、以 tick 为单位，并区分价差状态**。价差 = 1 档时，中间价最小变动是 $\delta/2$（价差扩成 2 档）或 $\delta$（整体平移）。障碍定义成 $\lvert m_s - m_t \rvert \ge \delta$，把「只有价差开合」视为没触到或单独一类。也可以用 microprice 做障碍基准，它是鞅，假触发更少。
 2. **τ 的主定义用物理时间，等于执行层实际的决策间隔**（如 1 / 5 / 30 秒）。跨股票的可比性靠把「平均中间价变动间隔」当特征解决（统一口径见 [`modeling-guide.md`](modeling-guide.md) 第 4 节）。
 3. **记录首达时间，升级为竞争风险模型**（7.1 节 (E)）。提醒：Lo、MacKinlay、Zhang（2002）发现用首达时间构造的「假想成交」不能很好地代表真实成交，用「中间价首次触及」去近似「挂单能否成交」要谨慎。
-4. **「没动」细分**：「完全安静」（中间价和价差都没变）和「有活动但没触到」。「没动」只说明 τ 内价格漂移小、等待的价格成本低，**不说明挂单会成交**：完全安静时挂单的成交概率 $q_0$ 往往很低。挂单是否划算要比较 $q_0\,(S/2 - f_m)$ 和 $(1 - q_0)\,c_{\text{wait}}$，需要成交模型。
+4. **「没动」细分**：「完全安静」（中间价和价差都没变）和「有活动但没触到」。「没动」只说明 τ 内价格漂移小、等待的价格成本低，**不说明挂单会成交**：完全安静时挂单的成交概率 $q_0$ 往往很低。由 [`ml-pipeline.md`](ml-pipeline.md) 2.8 节的成本公式，「没动」这条分支下挂单比吃单划算的条件是 $q_0\,(S + f_t - f_m) > (1 - q_0)\,c_{\text{wait}}$（$S$ 为价差）：成交了省下整个价差加费率差，没成交要付等待的代价。需要成交模型给出 $q_0$。
 5. **幅度用 hurdle 结构**（7.1 节 (F)），涨跌分开；样本不够时共享大部分参数、只让方向相关的项分开。
 6. **评估面向执行**：概率校准；MCC 或 macro-F1；覆盖率-精度曲线；挂单 markout、吃单和挂单切换的收益；按 tick 类别、时段、波动分层。
 7. **基线**：「OBI + 逻辑回归 + 下一次中间价变动」（Gould 和 Bonart）和 microprice 本身就是强基线，新模型必须在执行指标上打败它们。

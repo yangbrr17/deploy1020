@@ -97,23 +97,23 @@ $$
 $$
 
 - $\hat\pi_j$：τ 内先涨 ≥ 1 tick / 先跌 ≥ 1 tick / 都没有。**主决策用这个。**
-- $\hat\rho^{\uparrow}_j$：在「先涨」的条件下，τ 内最大上移 $\in \{1, 2, \ge 3\}$ tick 的概率；$\hat\rho^{\downarrow}_j$ 同理。
+- $\hat\rho^{\uparrow}_{j} = (\hat\rho^{\uparrow}_{j,1}, \hat\rho^{\uparrow}_{j,2}, \hat\rho^{\uparrow}_{j,3})$：在「先涨」的条件下，**到第 $j$ 个 horizon 末（也就是没成交、要追价的时点）**中间价相对 $m_t$ 上移 $\{1, 2, \ge 3\}$ tick 的概率；$\hat\rho^{\downarrow}_j$ 同理。用追价时点的位移而不是 τ 内的最大偏移，否则会高估追价成本。
 
 **交给执行层的量**（买单为例，对应成本公式里的 $p_\uparrow, p_\downarrow, p_0, \Delta_\uparrow, \Delta_\downarrow$）：
 
 $$
-p_\uparrow = \hat\pi^{\uparrow},\quad p_\downarrow = \hat\pi^{\downarrow},\quad p_0 = \hat\pi^{0},\qquad
-\Delta_\uparrow = \delta \sum_{m=1}^{3} \bar m_m\,\hat\rho^{\uparrow}_m,\quad \bar m = (1, 2, \mathbb{E}[\text{幅度} \mid \ge 3])
+p_\uparrow = \hat\pi^{\uparrow}_j,\quad p_\downarrow = \hat\pi^{\downarrow}_j,\quad p_0 = \hat\pi^{0}_j,\qquad
+\Delta_{\uparrow,j} = \delta \sum_{b=1}^{3} \bar a_b\,\hat\rho^{\uparrow}_{j,b},\quad \bar a = \big(1,\ 2,\ \mathbb{E}[\text{位移} \mid \ge 3]\big)
 $$
 
-$\mathbb{E}[\text{幅度} \mid \ge 3]$ 用训练集的经验均值。
+$j$ 取和执行决策间隔一致的那个 horizon；$\mathbb{E}[\text{位移} \mid \ge 3]$ 用训练集的经验均值；$\Delta_{\downarrow,j}$ 同理。
 
 ## 3. 损失
 
 样本 $i$ 的唯一性权重 $w_i$（见 [`ml-pipeline.md`](../ml-pipeline.md) 2.4 节）：
 
 $$
-\mathcal{L} = \frac{1}{\sum_i w_i}\sum_i w_i \sum_{j} \Big[\underbrace{-\log \hat\pi_{j, y^{\text{fp}}_{ij}}(x_i)}_{\text{首达}} + \lambda_{\text{mag}}\Big(\mathbb{1}[y^{\text{fp}}_{ij} = \uparrow]\big(-\log \hat\rho^{\uparrow}_{j, y^{\text{mag}}_{ij}}\big) + \mathbb{1}[y^{\text{fp}}_{ij} = \downarrow]\big(-\log \hat\rho^{\downarrow}_{j, y^{\text{mag}}_{ij}}\big)\Big)\Big]
+\mathcal{L} = \frac{1}{\sum_i w_i}\sum_i w_i \sum_{j} \Big[\underbrace{-\log \hat\pi_{j, y^{\text{fp}}_{ij}}(x_i)}_{\text{首达}} + \lambda_{\text{mag}}\Big(\mathbf{1}[y^{\text{fp}}_{ij} = \uparrow]\big(-\log \hat\rho^{\uparrow}_{j, y^{\text{mag}}_{ij}}\big) + \mathbf{1}[y^{\text{fp}}_{ij} = \downarrow]\big(-\log \hat\rho^{\downarrow}_{j, y^{\text{mag}}_{ij}}\big)\Big)\Big]
 $$
 
 - 幅度项只对「动了」的样本计算（条件分布），涨和跌用不同的头。
@@ -168,9 +168,9 @@ $C = 32$，$H_{\text{gru}} = 64$，3 个 horizon，500 只股票：
 
 1. **切分**：按交易日，训练 60 天 → 空 1 天（purge）→ 早停验证 8 天 → 校准 2 天 → 测试 10 天；之后 walk-forward 滚动。有多日滚动特征时 purge ≥ 窗口天数。
 2. **采样**：决策时点采样；样本高度重叠，每隔 5–10 个事件取一个窗口，并乘唯一性权重。
-3. **优化**：AdamW + OneCycle（warmup 10%）；梯度裁剪 1.0；EMA 权重（带预热 $d_t = \min(0.999, \frac{1+t}{10+t})$）。
+3. **优化**：AdamW + OneCycle（warmup 10%）；梯度裁剪 1.0；EMA 权重（带预热 $\beta^{\text{ema}}_t = \min(0.999, \frac{1+t}{10+t})$）。
 4. **早停**：盯 EMA 模型在验证集上的加权 log loss，patience 5，最多 30 个 epoch。
-5. **校准**：在校准窗口上对每个 horizon 的首达头单独拟合温度 $T_j$（见 [`ml-pipeline.md`](../ml-pipeline.md) 2.7 节）。
+5. **校准**：在校准窗口上对每个 horizon 的首达头单独拟合温度 $T_{\text{cal}, j}$（见 [`ml-pipeline.md`](../ml-pipeline.md) 2.7 节）。
 6. **i9 上的训练时间**（量级估计，未实测）：5 万参数、$10^7$ 个样本、batch 512，前向加反向每个样本约 $3 \times 4.5 \times 10^4 \times T$ 次乘加，$T = 100$ 时约 $1.4 \times 10^7$；一个 epoch 约 $1.4 \times 10^{14}$ 次运算，i9 多线程实际吞吐按 $10^{11}$–$10^{12}$ 次/秒算，**一个 epoch 约 3–20 分钟，30 个 epoch 几小时以内**。用 `torch.set_num_threads(物理核数)`。
 
 ## 7. 怎么分析训练好的模型

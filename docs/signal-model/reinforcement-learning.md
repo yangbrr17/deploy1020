@@ -59,13 +59,13 @@ $$
 | `CANCEL` | 撤掉现有挂单 |
 | `HOLD` | 什么都不做（保留现有挂单） |
 
-**进度带用动作屏蔽实现，不进奖励。** 设 $\epsilon$ 是缓冲带，$S_n$ 是价差（以 tick 计），允许的动作集合是：
+**进度带用动作屏蔽实现，不进奖励。** 设 $\epsilon_{\text{band}}$ 是缓冲带，$S_n$ 是价差（以 tick 计），允许的动作集合是：
 
 $$
 \mathcal{A}(s_n) =
 \begin{cases}
-\{\texttt{TAKE}, \texttt{IMPROVE}\} & p(t_n) < L(t_n) + \epsilon \quad \text{（快落后了，只能追）}\\
-\mathcal{A} \setminus \{\texttt{TAKE}\} & p(t_n) > U(t_n) - \epsilon \quad \text{（超前了，不许吃）}\\
+\{\texttt{TAKE}, \texttt{IMPROVE}\} & p(t_n) < L(t_n) + \epsilon_{\text{band}} \quad \text{（快落后了，只能追）}\\
+\mathcal{A} \setminus \{\texttt{TAKE}\} & p(t_n) > U(t_n) - \epsilon_{\text{band}} \quad \text{（超前了，不许吃）}\\
 \mathcal{A} & \text{其他}
 \end{cases}
 \quad \cap \quad \{a : a \ne \texttt{IMPROVE} \text{ 若 } S_n = 1\}
@@ -73,19 +73,19 @@ $$
 
 再加上撤单频率、价格保护等风控条件。屏蔽在策略输出时实现：对 $a \notin \mathcal{A}(s)$ 把分数设为 $-\infty$，见第 8.2 节的代码。
 
-**为什么不用奖励里的惩罚项？** 软惩罚 $-\kappa \max(0, L - p)^2$ 只是让越界变「贵」，样本少时学不出可靠的「永不越界」；而且 $\kappa$ 很难调。屏蔽是硬保证。如果确实要放进优化，正确的形式是**约束 MDP**：
+**为什么不用奖励里的惩罚项？** 软惩罚 $-c_{\text{pen}} \max(0, L - p)^2$ 只是让越界变「贵」，样本少时学不出可靠的「永不越界」；而且 $c_{\text{pen}}$ 很难调。屏蔽是硬保证。如果确实要放进优化，正确的形式是**约束 MDP**：
 
 $$
-\max_\pi\ \mathbb{E}_\pi\Big[\sum_n r_n\Big] \quad \text{s.t.} \quad \mathbb{E}_\pi\Big[\sum_n c^{\text{band}}_n\Big] \le \kappa
+\max_\pi\ \mathbb{E}_\pi\Big[\sum_n r_n\Big] \quad \text{s.t.} \quad \mathbb{E}_\pi\Big[\sum_n c^{\text{band}}_n\Big] \le \bar c
 \qquad\Longrightarrow\qquad
-\mathcal{L}(\pi, \nu) = \mathbb{E}_\pi\Big[\sum_n (r_n - \nu\, c^{\text{band}}_n)\Big] + \nu \kappa
+\mathcal{L}(\pi, \nu) = \mathbb{E}_\pi\Big[\sum_n (r_n - \nu\, c^{\text{band}}_n)\Big] + \nu \bar c
 $$
 
-拉格朗日乘子 $\nu \ge 0$ 按 $\nu \leftarrow \max\big(0, \nu + \eta (\hat{\mathbb{E}}[\sum c^{\text{band}}] - \kappa)\big)$ 更新。我们的场景用屏蔽就够了。
+拉格朗日乘子 $\nu \ge 0$ 按 $\nu \leftarrow \max\big(0, \nu + \eta (\hat{\mathbb{E}}[\sum c^{\text{band}}] - \bar c)\big)$ 更新（$\eta$ 是步长）。我们的场景用屏蔽就够了。
 
 ### 2.4 奖励：从执行成本推出来
 
-切片的执行成本（以基点计，越小越好），参考价用**决策时刻的中间价** $m_0$：
+切片的执行成本（以基点计，越小越好），参考价用**切片起点的中间价** $m_0 = m(t_0)$：
 
 $$
 C = \frac{10^4}{q^*\, m_0}\Big[\ \underbrace{d \sum_{i \in \text{fills}} v_i\,(p_i - m_0)}_{\text{切片内成交}} \;+\; \underbrace{d\, q^{\text{rem}}_N\,(p^{\text{clean}} - m_0)}_{\text{窗口结束时按规则清扫}}\ \Big]
@@ -116,20 +116,26 @@ $$
 
 **清扫成本必须进奖励。** 否则策略会一直挂深档等便宜价，把未成交的风险推给排程层（reward hacking）。
 
-**加密奖励：基于势函数的塑形。** 只在最后一步给清扫成本会让奖励很稀疏。用势函数 $\Phi$ 塑形不改变最优策略（Ng、Harada、Russell 1999）：
+**加密奖励：基于势函数的塑形。** 只在最后一步给清扫成本会让奖励很稀疏。用势函数 $\Phi$ 塑形不改变最优策略（Ng、Harada、Russell 1999），前提是**终止状态的势为 0**：
 
 $$
-\tilde r_n = r_n + \gamma\,\Phi(s_{n+1}) - \Phi(s_n),
+\tilde r_n = r_n + \Phi(s_{n+1}) - \Phi(s_n),
 \qquad
-\Phi(s) = -\frac{10^4}{q^*}\,\frac{q^{\text{rem}}(s)}{m_0}\Big(\frac{S(s)\,\delta}{2} + f_t\Big)
+\Phi(s_n) = \begin{cases} -\dfrac{10^4}{q^*\,m_0}\, q^{\text{rem}}_n\Big(\dfrac{S_n\,\delta}{2} + f_t\Big) & n < N \\[2mm] 0 & n = N \end{cases}
 $$
 
-$\Phi(s)$ 就是「如果现在把剩余量全部吃掉」的预期成本（$S$ 为价差 tick 数，$\delta$ 为 tick，$f_t$ 为吃单费用）。每成交一部分，势函数就回升，奖励因此变密。
+$\Phi(s_n)$ 就是「如果现在把剩余量全部吃掉」的预期成本取负（$S_n$ 为价差 tick 数，$\delta$ 为 tick，$f_t$ 为吃单费用）。每成交一部分，势函数就回升，奖励因此变密。加总后
+
+$$
+\sum_{n=0}^{N-1}\tilde r_n = \sum_n r_n + \Phi(s_N) - \Phi(s_0) = -C - \Phi(s_0)
+$$
+
+$\Phi(s_0)$ 只取决于初始状态，和策略无关，所以最优策略不变。**如果 $\Phi(s_N) \ne 0$**（比如还按剩余量计势），它会随策略变化，剩余量会在已经含清扫成本的 $r_{N-1}$ 之外再被罚一次，最优策略就变了。
 
 **风险偏好（可选）。** 均值-方差或 CVaR 目标：
 
 $$
-J_\lambda(\pi) = \mathbb{E}_\pi[-C] - \lambda\,\mathrm{Var}_\pi(C),
+J_{\lambda_{\text{mv}}}(\pi) = \mathbb{E}_\pi[-C] - \lambda_{\text{mv}}\,\mathrm{Var}_\pi(C),
 \qquad
 J_\alpha(\pi) = -\mathrm{CVaR}_\alpha(C) = -\mathbb{E}\big[C \mid C \ge \mathrm{VaR}_\alpha(C)\big]
 $$
@@ -156,15 +162,17 @@ $$
 
 （清扫成本已经计入 $r_{N-1}$。）因为剩余时间 $\frac{t_N - t_n}{T}$ 在状态里，可以去掉下标 $n$，用一个函数 $Q^*(s, a)$ 表示。
 
-**和监督模块的关系。** 对一步决策，$Q$ 有显式结构。以买单的 `TAKE` 和 `JOIN` 为例（成本以价格计，再乘以 $-\frac{10^4}{m_0}$ 换成奖励）：
+**和监督模块的关系。** 对一步决策，$Q$ 有显式结构。以买单的 `TAKE` 和 `JOIN` 为例（括号里是以价格计的成本，乘以 $\frac{10^4}{m_0}$ 换成基点，再取负号就是奖励；$S_n\delta$ 是第 $n$ 步的价差）：
 
 $$
-Q(s, \texttt{TAKE}) \approx -\Big(\tfrac{s}{2} + f_t + \text{impact}\Big) + \text{continuation}
+Q(s_n, \texttt{TAKE}) \approx -\frac{10^4}{m_0}\Big(\frac{S_n\delta}{2} + f_t + \text{impact}\Big) + \text{continuation}
 $$
 
 $$
-Q(s, \texttt{JOIN}) \approx -\sum_{k \in \{\uparrow, \downarrow, 0\}} \hat\pi^{k}\Big[q_k\big(-\tfrac{s}{2} + f_m\big) + (1 - q_k)\,\big(\text{价格变化}_k + \tfrac{s}{2} + f_t\big)\Big] + \text{continuation}
+Q(s_n, \texttt{JOIN}) \approx -\frac{10^4}{m_0}\sum_{k \in \{\uparrow, \downarrow, 0\}} \hat\pi^{k}_n\Big[q_k\Big(-\frac{S_n\delta}{2} + f_m\Big) + (1 - q_k)\Big(\Delta_k + \frac{S_n\delta}{2} + f_t\Big)\Big] + \text{continuation}
 $$
+
+（$\Delta_k$ 是结局 $k$ 下没成交、追价时的价格变化：$\Delta_\uparrow > 0$，$\Delta_\downarrow < 0$，$\Delta_0 = 0$ 但要加上落后进度的代价。）
 
 去掉 continuation 项，就是 [`ml-pipeline.md`](ml-pipeline.md) 2.8 节的成本决策层。**所以「监督模块 + 一步决策」是 $Q$ 的一步近似**，RL 补上的是 continuation：现在不成交、下一步还能做什么的价值（比如排队位置的期权价值）。
 
@@ -174,7 +182,7 @@ $$
 |---|---|---|---|---|---|
 | **Contextual bandit** | ε-greedy、LinUCB、Thompson、DR 离线策略学习 | $\pi(x) = \arg\max_a \hat\mu(x, a)$，只学一步的期望收益 | 少量（安全集内） | 有随机化日志时可以 | **最适合起步** |
 | 值函数（无模型） | Q-learning、DQN、Double DQN | $\big(r + \gamma Q_{\bar\theta}(s', \arg\max_{a'} Q_\theta(s', a')) - Q_\theta(s, a)\big)^2$ | 是 | 否 | 只在模拟器里 |
-| 策略梯度 | REINFORCE、A2C、PPO | $\nabla J = \mathbb{E}[\nabla \log \pi_\theta(a\mid s)\,\hat A]$；PPO 截断 $\min(\rho \hat A, \mathrm{clip}(\rho, 1\pm\epsilon)\hat A)$ | 是 | 否 | 只在模拟器里 |
+| 策略梯度 | REINFORCE、A2C、PPO | $\nabla J = \mathbb{E}[\nabla \log \pi_\theta(a\mid s)\,\hat A]$；PPO 截断 $\min(\rho \hat A, \mathrm{clip}(\rho, 1\pm\epsilon_{\text{clip}})\hat A)$ | 是 | 否 | 只在模拟器里 |
 | 连续动作 actor-critic | DDPG、TD3、SAC | SAC：$\max \mathbb{E}\big[\sum r + \alpha \mathcal{H}(\pi(\cdot\mid s))\big]$ | 是 | 否 | 不推荐（价格是离散 tick） |
 | 基于模型 | Dyna、MPC、MuZero | 学 $\hat P(s'\mid s, a)$ 再规划 | 视情况 | 可以 | 难点就是模型本身（= 模拟器） |
 | **离线 RL** | BCQ、CQL、IQL、TD3+BC、FQI | 在固定日志上学，限制策略不偏离日志覆盖的动作 | 否 | **是** | **第二步** |
@@ -204,7 +212,7 @@ $$
 **为什么 bandit 最可靠：**
 
 1. **没有时序信用分配**：只估计 $\mathbb{E}[r \mid x, a]$，是普通的回归问题，误差不会通过 Bellman 备份累积放大。
-2. **能严格离线评估**：只要日志里有倾向得分，DR 估计量是无偏的（只要倾向得分或奖励模型有一个是对的），还有标准误，可以设置上线门槛。
+2. **能严格离线评估**：日志里记录了真实的倾向得分时，DR 估计量在一定条件下无偏（6.3 节），还有标准误，可以设置上线门槛。
 3. **可解释**：奖励模型是 GBDT，策略可以压成深度 2–4 的策略树。
 4. **出错有上界**：宏动作只持续几秒，结束就清扫或回到规则。
 
@@ -251,7 +259,7 @@ $$
 
 ### 6.3 离线评估：IPW、SNIPW、DR
 
-用一段**没参与训练**的日志评估新策略 $\pi$（确定性策略时 $\pi(a \mid x) = \mathbb{1}[a = \pi(x)]$）：
+用一段**没参与训练**的日志评估新策略 $\pi$（确定性策略时 $\pi(a \mid x) = \mathbf{1}[a = \pi(x)]$）：
 
 $$
 \hat V_{\text{IPW}}(\pi) = \frac{1}{n}\sum_{i=1}^{n} \frac{\pi(a_i \mid x_i)}{\pi_0(a_i \mid x_i)}\, r_i,
@@ -263,7 +271,8 @@ $$
 \hat V_{\text{DR}}(\pi) = \frac{1}{n}\sum_{i=1}^{n}\Big[\underbrace{\sum_{a} \pi(a \mid x_i)\,\hat\mu(x_i, a)}_{\text{直接法}} + \underbrace{w_i\,\big(r_i - \hat\mu(x_i, a_i)\big)}_{\text{用实际奖励修正模型误差}}\Big]
 $$
 
-- IPW 无偏但方差大；直接法方差小但有模型偏差；**DR 只要倾向得分和奖励模型有一个正确就无偏**，方差介于两者之间（Dudík、Langford、Li 2011）。
+- IPW 无偏但方差大；直接法方差小但有模型偏差；**DR 只要倾向得分和奖励模型有一个正确就（渐近）无偏**（Dudík、Langford、Li 2011）。奖励模型较准时 DR 的方差比 IPW 小；但 $\hat\mu$ 很差时，DR 的方差可以超过 IPW。
+- 严格无偏需要：(1) $\pi_0$ 是日志里真实记录的倾向；(2) 重叠：$\pi(a \mid x) > 0 \Rightarrow \pi_0(a \mid x) > 0$；(3) $\hat\mu$ 在和评估样本独立的数据上拟合（交叉拟合）；(4) 权重不截断。截断换来更小的方差，代价是一点偏差。
 - 权重截断 $w_i \leftarrow \min(w_i, M)$（如 $M = 20$）用偏差换方差。
 - 标准误：$\widehat{\mathrm{se}} = \mathrm{sd}(\Gamma_i)/\sqrt{n}$，其中 $\Gamma_i$ 是上式方括号里的每样本项。同一母单内的样本相关，标准误要按母单聚类计算。
 - **上线门槛**：$\hat V_{\text{DR}}(\hat\pi) - \hat V_{\text{DR}}(\pi_0)$ 的 95% 置信下界大于 0。
@@ -273,10 +282,10 @@ $$
 把每个样本对每个动作的 DR 分数
 
 $$
-\Gamma_i(a) = \hat\mu(x_i, a) + \frac{\mathbb{1}[a_i = a]}{\pi_0(a_i \mid x_i)}\big(r_i - \hat\mu(x_i, a_i)\big)
+\Gamma_i(a) = \hat\mu(x_i, a) + \frac{\mathbf{1}[a_i = a]}{\pi_0(a_i \mid x_i)}\big(r_i - \hat\mu(x_i, a_i)\big)
 $$
 
-当作「如果当时选 $a$ 能得到的奖励」的无偏估计，在深度为 $D$ 的决策树类 $\Pi_D$ 里找最优策略（Athey 和 Wager 2021）：
+当作「如果当时选 $a$ 能得到的奖励」的估计（满足 6.3 节的条件时无偏），在深度为 $D$ 的决策树类 $\Pi_D$ 里找最优策略（Athey 和 Wager 2021）：
 
 $$
 \hat\pi_{\text{tree}} = \arg\max_{\pi \in \Pi_D} \sum_{i=1}^{n} \Gamma_i\big(\pi(x_i)\big)
@@ -286,10 +295,10 @@ $$
 
 ### 6.5 在线：安全集内的 Thompson 采样
 
-上线后继续小比例探索、持续更新。每个动作一个贝叶斯线性回归 $r = \theta_a^\top x + \varepsilon$，$\varepsilon \sim \mathcal{N}(0, \sigma^2)$，先验 $\theta_a \sim \mathcal{N}(0, \lambda^{-1} I)$。后验：
+上线后继续小比例探索、持续更新。每个动作一个贝叶斯线性回归 $r = \theta_a^\top x + \varepsilon$，$\varepsilon \sim \mathcal{N}(0, \sigma^2)$，先验 $\theta_a \sim \mathcal{N}(0, \lambda_0^{-1} I)$。后验：
 
 $$
-A_a = \lambda I + \frac{1}{\sigma^2}\sum_{i: a_i = a} x_i x_i^\top,
+A_a = \lambda_0 I + \frac{1}{\sigma^2}\sum_{i: a_i = a} x_i x_i^\top,
 \qquad
 b_a = \frac{1}{\sigma^2}\sum_{i: a_i = a} r_i x_i,
 \qquad
@@ -399,7 +408,9 @@ $$
 Q^{(j+1)} = \arg\min_{Q \in \mathcal{F}_{\text{GBDT}}} \sum_i \big(Q(s_i, a_i) - y_i^{(j)}\big)^2
 $$
 
-- $\mathcal{A}_\beta$ 只保留日志里出现得足够多的动作（BCQ 的思路，Fujimoto 等 2019），$\tau$ 取 0.05–0.3。$\tau \to 0$ 退化为普通 FQI（会过度乐观），$\tau \to 1$ 退化为行为克隆。
+- $\mathcal{A}_\beta$ 只保留日志里出现得足够多的动作（BCQ 的思路，Fujimoto 等 2019），阈值 $\varsigma$ 取 0.05–0.3。
+- **最终的策略也要限制在同一个支撑集上**：$\hat\pi(s) = \arg\max_{a \in \mathcal{A}(s) \cap \mathcal{A}_\beta(s)} Q(s, a)$。只在备份里限制而不在策略提取时限制，策略仍可能选日志里罕见的动作。
+- 两处都限制以后：$\varsigma \to 0$ 退化为普通 FQI（会过度乐观），$\varsigma \to 1$ 退化为「总选日志里最常见的动作」（行为策略的众数）。
 - 剩余时间在状态里时，迭代 $N$ 次（切片的决策步数）就是精确的逆向归纳。
 - 可以加单调约束，例如 $Q(s, \texttt{TAKE})$ 对价差单调递减。
 
@@ -421,6 +432,7 @@ def constrained_fqi(S, A, R, S2, done, mask2, n_steps, K, behaviour_prob2, tau=0
     behaviour_prob2:   estimated pi_beta(a | S2[i]) for every a, shape (n, K).
     Only actions with pi_beta(a|s') >= tau * max_b pi_beta(b|s') enter the max (BCQ-style support
     constraint), so the backup never trusts actions the logs barely contain.
+    (tau here is the support threshold called varsigma in the text.)
     n_steps:           horizon in decisions; with time-to-go in the state, n_steps iterations are exact
                        backward induction.
     """
@@ -439,6 +451,13 @@ def constrained_fqi(S, A, R, S2, done, mask2, n_steps, K, behaviour_prob2, tau=0
             target = R + (1 - done) * q2
         q = lgb.LGBMRegressor(**params).fit(_xa(S, A, K), target)
     return q
+
+
+def constrained_greedy(q, S, mask, behaviour_prob, K, tau=0.1):
+    """Policy extraction restricted to the same support: argmax over allowed AND well-logged actions."""
+    support = behaviour_prob >= tau * behaviour_prob.max(axis=1, keepdims=True)
+    qs = np.column_stack([q.predict(_xa(S, np.full(len(S), k), K)) for k in range(K)])
+    return np.where(mask & support, qs, -np.inf).argmax(axis=1)
 ```
 
 （在一个 5 步的玩具切片上验证过：信号有利时学到挂单，信号不利时学到「先等、最后一步再吃」，和手算的最优解一致。）
@@ -448,20 +467,20 @@ def constrained_fqi(S, A, R, S2, done, mask2, n_steps, K, behaviour_prob2, tau=0
 IQL（Kostrikov、Nair、Levine）从不在备份里查询日志之外的动作。三个损失：
 
 $$
-\mathcal{L}_V(\psi) = \mathbb{E}_{(s,a)\sim\mathcal{D}}\Big[L_2^{\kappa}\big(Q_{\bar\theta}(s, a) - V_\psi(s)\big)\Big],
+\mathcal{L}_V(\psi) = \mathbb{E}_{(s,a)\sim\mathcal{D}}\Big[L_2^{\kappa_e}\big(Q_{\bar\theta}(s, a) - V_\psi(s)\big)\Big],
 \qquad
-L_2^{\kappa}(u) = \big\lvert \kappa - \mathbb{1}[u < 0] \big\rvert\, u^2
+L_2^{\kappa_e}(u) = \big\lvert \kappa_e - \mathbf{1}[u < 0] \big\rvert\, u^2
 $$
 
 $$
-\mathcal{L}_Q(\theta) = \mathbb{E}_{(s,a,r,s')\sim\mathcal{D}}\Big[\big(r + V_\psi(s') - Q_\theta(s, a)\big)^2\Big]
+\mathcal{L}_Q(\theta) = \mathbb{E}_{(s,a,r,s')\sim\mathcal{D}}\Big[\big(r + (1 - \text{done})\,V_\psi(s') - Q_\theta(s, a)\big)^2\Big]
 $$
 
 $$
 \mathcal{L}_\pi(\phi) = -\mathbb{E}_{(s,a)\sim\mathcal{D}}\Big[\exp\big(\beta\,(Q_{\bar\theta}(s, a) - V_\psi(s))\big)\log \pi_\phi(a \mid s)\Big]
 $$
 
-- 期望分位数 $\kappa \in (0.5, 1)$：$\kappa$ 越接近 1，$V$ 越接近日志里动作的最大 $Q$（越激进）。常用 0.7–0.9。
+- 期望分位数 $\kappa_e \in (0.5, 1)$：$\kappa_e$ 越接近 1，$V$ 越接近日志里动作的最大 $Q$（越激进）。常用 0.7–0.9。
 - $\beta$ 是优势加权的温度：$\beta \to 0$ 是行为克隆，越大越贪心。常用 3–10，权重截断到 100。
 - 网络：2 层 MLP，256 单元，Adam，学习率 3e-4。$10^6$ 条转移在 i9 上训练约 1–3 小时。
 
@@ -496,23 +515,23 @@ $\mathcal{D}_0$ 是各切片的初始状态。FQE 和第 4 节的模拟器评估
 $$
 \rho_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)},
 \qquad
-\mathcal{L}^{\text{CLIP}}(\theta) = -\mathbb{E}_t\Big[\min\big(\rho_t \hat A_t,\ \mathrm{clip}(\rho_t, 1-\epsilon, 1+\epsilon)\,\hat A_t\big)\Big]
+\mathcal{L}^{\text{CLIP}}(\theta) = -\mathbb{E}_t\Big[\min\big(\rho_t \hat A_t,\ \mathrm{clip}(\rho_t, 1-\epsilon_{\text{clip}}, 1+\epsilon_{\text{clip}})\,\hat A_t\big)\Big]
 $$
 
 优势用 GAE：
 
 $$
-\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t),
+\delta^{\text{TD}}_t = r_t + \gamma V(s_{t+1}) - V(s_t),
 \qquad
-\hat A_t = \sum_{l \ge 0} (\gamma\lambda)^l\, \delta_{t+l}
+\hat A_t = \sum_{l \ge 0} (\gamma\lambda_{\text{GAE}})^l\, \delta^{\text{TD}}_{t+l}
 $$
 
 总损失 $\mathcal{L} = \mathcal{L}^{\text{CLIP}} + c_v\,\mathbb{E}\big[(V_\theta(s_t) - \hat R_t)^2\big] - c_e\,\mathbb{E}\big[\mathcal{H}(\pi_\theta(\cdot \mid s_t))\big]$。
 
 | 超参数 | 起点 |
 |---|---|
-| $\gamma$ / $\lambda$ | 1.0 / 0.95（有限时域） |
-| $\epsilon$（截断） | 0.2 |
+| $\gamma$ / $\lambda_{\text{GAE}}$ | 1.0 / 0.95（有限时域） |
+| $\epsilon_{\text{clip}}$ | 0.2 |
 | 学习率 | 3e-4，线性衰减 |
 | 每次更新的步数 / minibatch / epoch | 4096 / 256 / 10 |
 | $c_v$ / $c_e$ | 0.5 / 0.01 |
@@ -521,7 +540,7 @@ $$
 
 ### 8.2 动作屏蔽和 PPO 的辅助函数
 
-屏蔽的数学形式是 $\pi(a \mid s) = \dfrac{\exp(z_a)\,\mathbb{1}[a \in \mathcal{A}(s)]}{\sum_{b \in \mathcal{A}(s)} \exp(z_b)}$：
+屏蔽的数学形式是 $\pi(a \mid s) = \dfrac{\exp(z_a)\,\mathbf{1}[a \in \mathcal{A}(s)]}{\sum_{b \in \mathcal{A}(s)} \exp(z_b)}$：
 
 ```python
 import numpy as np
@@ -555,15 +574,15 @@ def gae(rewards, values, gamma=1.0, lam=0.95):
 
 RL 和 bandit 都要和解析解比，参数从数据校准。
 
-**Almgren-Chriss（排程层）**：线性临时冲击 $\eta$、波动 $\sigma$、风险厌恶 $\lambda$，最优剩余持仓轨迹
+**Almgren-Chriss（排程层）**：线性临时冲击 $\eta$、波动 $\sigma$、风险厌恶 $\lambda_{\text{AC}}$、执行时长 $T_{\text{ex}}$，最优剩余持仓轨迹
 
 $$
-x(t) = X\,\frac{\sinh\big(\kappa (T - t)\big)}{\sinh(\kappa T)},
+x(t) = X\,\frac{\sinh\big(\kappa_{\text{AC}} (T_{\text{ex}} - t)\big)}{\sinh(\kappa_{\text{AC}} T_{\text{ex}})},
 \qquad
-\kappa = \sqrt{\frac{\lambda\sigma^2}{\eta}}
+\kappa_{\text{AC}} = \sqrt{\frac{\lambda_{\text{AC}}\sigma^2}{\eta}}
 $$
 
-$\lambda \to 0$ 时退化为 TWAP 的线性轨迹。
+$\lambda_{\text{AC}} \to 0$ 时退化为 TWAP 的线性轨迹。
 
 **下单方式层**：Cartea 和 Jaimungal（2015）的限价 + 市价单最优执行（平时挂单赚价差、进度落后时用市价单补），以及 Cartea 和 Jaimungal（2016）、Lehalle 和 Neuman（2019）把订单流信号加进最优执行。它们的解在简单情形下是检验 RL 管线的「标准答案」：RL 在这些模型的模拟环境（如 mbt_gym）里应当能复现解析最优解。
 
@@ -596,9 +615,9 @@ $\varepsilon_s$ 是自己第 $s$ 笔主动成交的方向，$v_s$ 是量，$\bet
 只有按价位聚合的数据时，不知道撤单发生在我们前面还是后面。设我们前面的量为 $Q_a$，后面的量为 $Q_b$：
 
 - 该档有成交量 $v$：$Q_a \leftarrow \max(Q_a - v, 0)$，$Q_a$ 降到 0 后再有成交，我们才开始成交。
-- 该档撤单量 $\Delta$：$Q_a \leftarrow Q_a - \Delta \cdot \dfrac{f(Q_a)}{f(Q_a) + f(Q_b)}$，常用 $f(x) = x^n$（$n = 1$ 均匀，$n > 1$ 表示撤单更可能发生在队尾，模型更乐观）。
+- 该档撤单量 $\Delta$：$Q_a \leftarrow Q_a - \Delta \cdot \dfrac{f(Q_a)}{f(Q_a) + f(Q_b)}$，常用 $f(x) = x^n$：$n = 1$ 时撤单按前后两段的长度比例分摊；$n > 1$ 时更多地分给较长的那一段（我们靠近队尾时更乐观，靠近队首时反而更悲观）。
 
-$n$ 要用自己的真实子单校准；同时报告 $n = 1$ 的保守结果。hftbacktest（MIT）内置了这类模型和延迟模型，是第一层模拟器的好起点。
+$n$ 要用自己的真实子单校准。**真正的保守界**是「撤单全算在我们后面」（$Q_a$ 只随成交减少），同时报告这个结果。hftbacktest（MIT）内置了这类模型和延迟模型，是第一层模拟器的好起点。
 
 ### 10.4 Queue-reactive 模型（交互式）
 
@@ -623,22 +642,22 @@ $$
 
 评估层级：离线回测 → 模拟器 → 离线策略评估（DR / FQE）→ 影子运行 → 小流量随机对照 → 逐步放量。
 
-**每组需要的样本数**（双侧 $\alpha = 5\%$，功效 $1-\beta = 80\%$）：
+**每组需要的样本数**（双侧检验水平 5%，功效 80%）：
 
 $$
-n = \frac{2\,(z_{1-\alpha/2} + z_{1-\beta})^2\,\sigma^2}{\Delta^2} \approx \frac{15.7\,\sigma^2}{\Delta^2}
+n = \Big\lceil \frac{2\,(z_{0.975} + z_{0.8})^2\,\sigma^2}{\Delta^2} \Big\rceil \approx \Big\lceil \frac{15.70\,\sigma^2}{\Delta^2} \Big\rceil
 $$
 
 | 单笔成本标准差 $\sigma$ | $\Delta = 1$ bp | $\Delta = 2$ bp | $\Delta = 3$ bp |
 |---|---|---|---|
-| 10 bp | 1,570 | 392 | 174 |
+| 10 bp | 1,570 | 393 | 175 |
 | 30 bp | 14,128 | 3,532 | 1,570 |
-| 50 bp | 39,244 | 9,811 | 4,360 |
+| 50 bp | 39,245 | 9,812 | 4,361 |
 
 让试验可行：
 
 - **主检验用子单级指标**（价差捕获、markout、清扫成本），它们的 $\sigma$ 比母单 IS 小得多；母单 IS 当护栏。
-- **按母单随机化**；按子单随机化时，有效样本量按设计效应折算：$n_{\text{eff}} = \dfrac{n}{1 + (m - 1)\rho}$（$m$ 是每个母单的决策数，$\rho$ 是组内相关）。
+- **按母单随机化**（避免同一母单内的子单互相干扰）。用子单级指标分析时，同一母单内的子单相关，有效样本量按设计效应折算：$n_{\text{eff}} = \dfrac{n}{1 + (\bar m - 1)\rho}$（$\bar m$ 是每个母单的平均决策数，$\rho$ 是组内相关），标准误按母单聚类计算。
 - **CUPED**：用试验前就知道的协变量 $X$（如事前成本预估）降方差：
 
 $$

@@ -76,8 +76,10 @@ $$
 样本按唯一性加权的交叉熵，**不加类权重、不用 focal loss**（两者都破坏校准，而执行层直接用概率算成本）：
 
 $$
-\mathcal{L} = -\frac{1}{\sum_i w_i}\sum_i w_i \sum_j \log \hat\pi_{j, y_{ij}}(x_i) + \lambda_{\text{mag}}\,\mathcal{L}_{\text{mag}}
+\mathcal{L} = -\frac{1}{\sum_i w_i}\sum_i w_i \sum_{j=1}^{n_h} \log \hat\pi_{j, y_{ij}}(x_i) + \lambda_{\text{mag}}\,\mathcal{L}_{\text{mag}}
 $$
+
+$j$ 是 horizon（共 $n_h$ 个），$y_{ij}$ 是样本 $i$ 在第 $j$ 个 horizon 上的首达类别，$w_i$ 是唯一性权重；$\mathcal{L}_{\text{mag}}$ 的完整写法见 [OFI-TCN-GRU](dl/ofi-tcn-gru.md) 第 3 节。
 
 ### 3.5 切分
 
