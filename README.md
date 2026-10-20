@@ -7,7 +7,7 @@
 
 只写通用的技术思路，不涉及任何机构、业务和数据。
 
-网页版由 GitHub Pages 发布（`site/build.py` 把这些 Markdown 转成网页，推送后自动部署）。
+网页版由 GitHub Pages 发布（`site/build.py` 把这些 Markdown 转成网页，推送后自动部署）。公式用 LaTeX 书写（`$...$` 和 `$$...$$`），网页上用 KaTeX 渲染；每个代码块和公式都有复制按钮。文档里的 Python 代码都在本地跑通过。
 
 ## 目录
 
@@ -18,9 +18,9 @@
 | [`docs/signal-model/modeling-guide.md`](docs/signal-model/modeling-guide.md) | **总览**：问题定义、截面还是时序、输入和输出、ML / DL / RL 三条路线、pipeline、训练指标、先做什么 |
 | [`docs/signal-model/features-and-targets.md`](docs/signal-model/features-and-targets.md) | 输入变量全表（公式、直觉、经济含义）、经济学概念、跨股票标准化、预测目标对比 |
 | [`docs/signal-model/ml-pipeline.md`](docs/signal-model/ml-pipeline.md) | 机器学习路线：逻辑回归 → GBDT → 生存模型；完整 pipeline；指标；LightGBM 超参起点 |
-| [`docs/signal-model/deep-learning.md`](docs/signal-model/deep-learning.md) | 深度学习路线：模型谱系、基准的问题、第一版网络结构、损失、训练超参、CPU 推理 |
-| [`docs/signal-model/reinforcement-learning.md`](docs/signal-model/reinforcement-learning.md) | 强化学习：放在哪一层、MDP、算法选择、模拟器、评估与样本量 |
-| [`docs/signal-model/repos.md`](docs/signal-model/repos.md) | GitHub 开源仓库清单：用途、许可证、维护状态 |
+| [`docs/signal-model/deep-learning.md`](docs/signal-model/deep-learning.md) | 深度学习总览：精选模型对比、通用设计、训练指标、和 GBDT 比较、i9 CPU 上的训练和推理 |
+| [`docs/signal-model/dl/`](docs/signal-model/dl/ofi-tcn-gru.md) | 每个模型一页：[DeepLOB](docs/signal-model/dl/deeplob.md)、[BiN-CTABL](docs/signal-model/dl/bin-ctabl.md)、[Deep OFI](docs/signal-model/dl/deep-ofi.md)、[TLOB](docs/signal-model/dl/tlob.md)、[推荐的 OFI-TCN-GRU](docs/signal-model/dl/ofi-tcn-gru.md)：数学、逐层结构、参数怎么选、怎么分析、可运行代码 |
+| [`docs/signal-model/reinforcement-learning.md`](docs/signal-model/reinforcement-learning.md) | 强化学习：MDP、奖励和价值函数、十类方法比较、推荐方案（bandit + DR）的完整算法、模拟器、样本量 |
 | [`docs/signal-model/execution-signal-plan.md`](docs/signal-model/execution-signal-plan.md) | 信号在执行里怎么用：阈值、进度带、评估、分步计划 |
 
 **Agent 平台**

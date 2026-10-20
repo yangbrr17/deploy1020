@@ -1,292 +1,706 @@
-# 强化学习与模拟器
+# 强化学习：怎么建模、选哪一种
 
-2026-10 调研整理。强化学习（RL）在执行里放在哪一层、怎么建 MDP、选什么算法、模拟器怎么做、怎么评估。监督信号本身见 [`modeling-guide.md`](modeling-guide.md)。
+2026-10 整理。强化学习（RL）在执行里放在哪一层，状态、动作、奖励、价值函数怎么写；RL 有哪几类，各自的核心公式；按我们的约束逐项比较以后，哪一种最可靠，以及它的完整算法。监督信号本身见 [`modeling-guide.md`](modeling-guide.md)。
+
+运行环境假设：Intel i9 级别的 CPU（8–24 核），没有 GPU。
 
 ## 结论
 
-1. **RL 不做预测，只做「下单方式」这一层的小决策。** 排程层（规则、VWAP 曲线或 Almgren-Chriss）每隔几十秒到几分钟给出一个切片：目标量 q\* 和时间窗 T。RL 只决定这段时间里怎么下单：吃单、挂一档、挂深档、撤单重挂，还是不动。一个切片就是一个 episode，窗口结束时剩余量按规则清扫。
-2. **进度带是硬约束，不放进奖励。** 由排程层和「动作屏蔽」保证。样本少时，奖励里的软惩罚学不出可靠的「永不越界」。
-3. **路线：监督模块 → contextual bandit → 离线 RL → 模拟器里的在线 RL。** 前两步就可能拿到大部分收益；PPO / DQN 只在校准过的模拟器里做研究对照，产出的策略再蒸馏成决策树。
-4. **要尽早在现行规则里加一点受控的随机化**，并记录每个动作被选中的概率（倾向得分）。否则日志全是确定性规则产生的，任何离线评估和离线 RL 都没法评估规则从没选过的动作。
-5. **难点是模拟器，不是算力。** 除了 JAX-LOB 和生成式 LOB 模型，其余都能在 CPU 上做。
-6. **统计功效是上线评估的瓶颈。** 母单成本的标准差很大，主要指标要换成子单级的。
+1. **RL 不做预测，只做排程切片内「怎么下单」这一层的决策。** 监督模型给出的概率当作状态的一部分。全天排程和进度带由确定性逻辑负责，RL 出错的最坏后果被限制在一个切片的清扫成本以内。
+2. **奖励直接从执行成本推出来**：相对决策时刻中间价的切片成本（含清扫），可以拆成「价差项」和「时机项」，见第 2.4 节。进度带是**动作屏蔽**，不进奖励。
+3. **最可靠的方案是「宏动作 contextual bandit + 双重稳健（DR）离线学习和评估」**（第 6 节）。它是 RL 里最简单的一类：没有时序信用分配，只学「这个状态下每个动作的期望收益」，样本效率高、能离线评估、能解释。
+4. 当撤单重挂、排队位置这类**多步效应**确实重要时，再上**带行为约束的拟合 Q 迭代（FQI + LightGBM）**或离散 IQL（第 7 节）。PPO、DQN 只在校准过的模拟器里做研究对照，产出的策略要蒸馏成浅决策树。
+5. **前提是日志里有受控随机化**，并记录每个动作被选中的概率。没有这一步，第 3、4 条都做不了。
+6. 在 i9 CPU 上，bandit 和 FQI 是分钟级，小网络的离线 RL 和模拟器里的 PPO 是小时级。瓶颈是模拟器的速度，不是算力。
 
 ## 1. 分层
 
-```
-母单（方向、总量、当天完成、进度带 [L(t), U(t)]）
-  └─ 排程层（规则 / VWAP 曲线 / Almgren-Chriss，不交给 RL）
-       每个切片 k：目标量 q*_k，时间窗 [t_k, t_k + T]
-         └─ 下单方式层（bandit / RL 的候选）
-              每个决策点（事件驱动，或每 1–10 秒）：吃 / 挂一档 / 挂深 / 撤单重挂 / 不动
-              输入：盘口特征、信号概率、队列位置估计、切片剩余量和剩余时间、进度偏离
-         └─ 风控壳（硬约束）：进度带、价格保护、单笔上限、撤单频率、kill switch
+```mermaid
+flowchart TD
+  P["母单：方向 d、总量 Q、当天完成、进度带 [L(t), U(t)]"] --> S["排程层（规则 / VWAP 曲线 / Almgren-Chriss）<br/>每个切片 k：目标量 q*，时间窗 [t0, t0+T]"]
+  S --> R["下单方式层（bandit / RL）<br/>每个决策点：吃 / 挂一档 / 挂进价差 / 挂深 / 撤单 / 不动"]
+  R --> G["风控壳（硬约束）<br/>进度带屏蔽、价格保护、单笔上限、撤单频率、kill switch"]
+  SIG["监督信号：P(先涨)、P(先跌)、成交概率、幅度"] --> R
 ```
 
-好处：动作空间小、反馈快，样本量比「一天一个 episode」高几个数量级；RL 出错的最坏后果有上界，最多是一个切片的清扫成本。
+这种分层就是一个两级的分层强化学习（hierarchical RL / options）：上层排程不学，下层只在一个短时间窗内学。好处是动作空间小、反馈快、样本多（样本数 = 母单数 × 切片数 × 决策点数）。文献里在模拟器训练的 RL 在部分场景下会收敛到接近 TWAP 的轨迹（Karpe 等 2020），说明排程层面 RL 的增量可能有限。
 
-Karpe 等（2020）发现，在模拟器里训练出的 RL 在部分场景下收敛到接近 TWAP 的轨迹，说明排程层面 RL 的增量可能有限。这也支持「排程不交给 RL」。
+## 2. 把切片写成 MDP
 
-## 2. MDP 设计
+### 2.1 时间和记号
 
-### 状态
+一个切片内的决策时刻 $t_0 < t_1 < \dots < t_N = t_0 + T$（每 $\Delta$ 秒一次，或由盘口事件触发）。母单方向 $d \in \{+1, -1\}$（买为 $+1$），切片目标量 $q^*$，决策时刻的中间价 $m_n = m(t_n)$，切片起点中间价 $m_0$。第 $n$ 步结束时切片的剩余量为 $q^{\text{rem}}_n$，母单整体的执行进度为 $p(t) = \text{已成交量} / Q$。
 
-| 类别 | 特征 | 说明 |
-|---|---|---|
-| 切片私有变量 | 切片剩余比例 `q_rem / q*`，剩余时间比例 `τ_rem / T` | 最核心的两个（Nevmyvaka 等 2006） |
-| 进度 | 进度偏离 `已成交/Q − target(t)`，到上下界的距离 | 归一化到带宽 |
-| 盘口 | 价差（tick 数）、一档和前 N 档量、OBI、`microprice − mid`、近期成交方向和强度、撤单率、短窗波动 | 大 tick 和小 tick 股票分开处理 |
-| 信号 | 监督模型输出的 `P(先涨)`、`P(先跌)`，多个时长 | **只当输入**，RL 不重新学预测。可以同时输入信号最近的校准度 |
-| 自身挂单 | 有没有挂单、挂在哪档、**队列位置估计**（前方量 / 该档总量）、已挂时长、已部分成交量 | 有 L3 数据才能精确算队列位置；L2 只能用概率模型估 |
-| 时段 | 开盘后、收盘前的分钟数，临近集合竞价 | 非平稳的主要来源 |
-| 成本上下文 | 当前吃单成本、预估清扫成本 | 来自监督模块 |
+### 2.2 状态
 
-原则：先用 10–30 个手工特征，不直接喂原始盘口张量；按股票自身尺度归一化（tick、日均成交量、典型价差），多只股票共享一个策略；只用决策时刻已经到达的信息。
+$$
+s_n = \big(\underbrace{\tfrac{q^{\text{rem}}_n}{q^*},\ \tfrac{t_N - t_n}{T}}_{\text{切片私有变量}},\ \underbrace{\tfrac{p(t_n) - L(t_n)}{U(t_n) - L(t_n)}}_{\text{进度在带中的位置}},\ \underbrace{x^{\text{mkt}}_n}_{\text{盘口特征}},\ \underbrace{\hat\pi^{\uparrow}_n, \hat\pi^{\downarrow}_n, \hat q_n}_{\text{监督信号}},\ \underbrace{x^{\text{own}}_n}_{\text{自己的挂单}}\big)
+$$
 
-### 动作（离散，推荐起点）
+- $x^{\text{mkt}}_n$：价差（以 tick 计）、最优档 OBI、$\text{microprice} - \text{mid}$、标准化 OFI、短窗波动、时段。
+- $\hat\pi^{\uparrow}_n, \hat\pi^{\downarrow}_n$：监督模型给出的「τ 内先涨 / 先跌」概率；$\hat q_n$：挂单成交概率。**RL 不重新学预测，只使用它们。**
+- $x^{\text{own}}_n$：有没有挂单、挂在哪档、队列位置估计 $\frac{\text{前方量}}{\text{该档总量}}$、已挂时长。
+- 原则：10–30 个低维、按股票尺度归一化的特征，不直接喂原始盘口张量。剩余时间放进状态，策略就可以是平稳的。
 
-| 动作 | 含义 | 备注 |
-|---|---|---|
-| `TAKE` | 吃对手一档 | 数量 = min(切片剩余, 对手一档量 × α) |
-| `JOIN_L1` | 挂在己方一档，排队尾 | |
-| `IMPROVE` | 价差大于 1 档时挂进价差内 | 价差 = 1 档时屏蔽 |
-| `POST_DEEP` | 挂二档或更深 | 成交概率低 |
-| `CANCEL` / `REPOST` | 撤单，或撤了按最新盘口重挂 | 重挂会丢掉队列位置 |
-| `HOLD` | 不动 | 默认动作 |
+### 2.3 动作和屏蔽
 
-- **数量先固定成规则**，只学「方式」；第二阶段再加 2–3 个数量档。
-- **动作屏蔽**：接近下限只允许 `TAKE` / `IMPROVE`；接近上限禁止 `TAKE`；撤单频率超限禁止 `CANCEL`。SB3-Contrib 的 Maskable PPO 有现成实现，bandit / DQN 只要在 argmax 时过滤。
-- **宏动作**：把「挂在 X 档、持有 τ 秒、没成交就撤」定义成一个动作，多步交互压成一步，可以直接用 contextual bandit。
-- 价格本质上是离散的 tick，一开始不建议用连续动作（Pan 等 2022 的混合动作是为此设计的）。
+离散动作集合：
 
-### 奖励
+$$
+\mathcal{A} = \{\texttt{TAKE},\ \texttt{JOIN},\ \texttt{IMPROVE},\ \texttt{POST\_DEEP},\ \texttt{CANCEL},\ \texttt{HOLD}\}
+$$
 
-`s = +1` 买、`−1` 卖；成本以 bp 计，奖励 = −成本。
+| 动作 | 含义 |
+|---|---|
+| `TAKE` | 吃对手一档，数量 $\min(q^{\text{rem}}, \alpha \cdot \text{对手一档量})$ |
+| `JOIN` | 挂在己方一档队尾 |
+| `IMPROVE` | 价差大于 1 档时挂进价差内 |
+| `POST_DEEP` | 挂二档或更深 |
+| `CANCEL` | 撤掉现有挂单 |
+| `HOLD` | 什么都不做（保留现有挂单） |
 
-```
-# 切片级成本（推荐做奖励）：相对决策时刻的中间价 mid_0
-cost_slice = s * Σ q_i * (p_i − mid_0) / (q* * mid_0) * 1e4             # 已成交部分
-           + s * q_rem_T * (p_cleanup − mid_0) / (q* * mid_0) * 1e4      # 窗口结束时剩余量清扫
-reward     = − cost_slice
+**进度带用动作屏蔽实现，不进奖励。** 设 $\epsilon$ 是缓冲带，$S_n$ 是价差（以 tick 计），允许的动作集合是：
 
-# markout：成交后价格走势，诊断逆向选择
-markout_h = s * (mid(t_i + h) − p_i) / p_i * 1e4        # h = 1s / 5s / 30s，正数是好
+$$
+\mathcal{A}(s_n) =
+\begin{cases}
+\{\texttt{TAKE}, \texttt{IMPROVE}\} & p(t_n) < L(t_n) + \epsilon \quad \text{（快落后了，只能追）}\\
+\mathcal{A} \setminus \{\texttt{TAKE}\} & p(t_n) > U(t_n) - \epsilon \quad \text{（超前了，不许吃）}\\
+\mathcal{A} & \text{其他}
+\end{cases}
+\quad \cap \quad \{a : a \ne \texttt{IMPROVE} \text{ 若 } S_n = 1\}
+$$
 
-# 风险敏感（可选）
-penalty = λ * Var(cost) 或 CVaR_α(cost)
-```
+再加上撤单频率、价格保护等风控条件。屏蔽在策略输出时实现：对 $a \notin \mathcal{A}(s)$ 把分数设为 $-\infty$，见第 8.2 节的代码。
 
-- **参考价用决策时刻的中间价，不用母单到达价。** 到达价包含切片之前的全部漂移，切片内的动作控制不了，方差很大。
-- **清扫成本必须进奖励。** 否则策略会一直挂深档等便宜价，把未成交的风险推给排程层（reward hacking）。
-- **评估时可以把切片内的市场漂移当控制变量做方差缩减，训练时不要。** 否则会抹掉信号带来的择时收益。
+**为什么不用奖励里的惩罚项？** 软惩罚 $-\kappa \max(0, L - p)^2$ 只是让越界变「贵」，样本少时学不出可靠的「永不越界」；而且 $\kappa$ 很难调。屏蔽是硬保证。如果确实要放进优化，正确的形式是**约束 MDP**：
 
-### Episode
+$$
+\max_\pi\ \mathbb{E}_\pi\Big[\sum_n r_n\Big] \quad \text{s.t.} \quad \mathbb{E}_\pi\Big[\sum_n c^{\text{band}}_n\Big] \le \kappa
+\qquad\Longrightarrow\qquad
+\mathcal{L}(\pi, \nu) = \mathbb{E}_\pi\Big[\sum_n (r_n - \nu\, c^{\text{band}}_n)\Big] + \nu \kappa
+$$
 
-| 方案 | 定义 | 评价 |
-|---|---|---|
-| 全天母单 | 开盘到收盘 | 样本 = 母单数，太少；不采用 |
-| **排程切片** | 1–5 分钟，结束时清扫 | 样本 = 母单数 × 切片数，方差小，**推荐** |
-| 单个子单 | 从下单到成交或撤单 | 适合宏动作 bandit |
-| 事件驱动 | 每次盘口变化触发 | 最贴近真实，对模拟器要求最高；第二阶段 |
+拉格朗日乘子 $\nu \ge 0$ 按 $\nu \leftarrow \max\big(0, \nu + \eta (\hat{\mathbb{E}}[\sum c^{\text{band}}] - \kappa)\big)$ 更新。我们的场景用屏蔽就够了。
 
-### 必须同时比较的基线
+### 2.4 奖励：从执行成本推出来
 
-1. 现行规则（如固定挂一档 + 超时吃单）。
-2. 同样用信号的固定阈值规则：`P(不利方向) > θ` 就吃单，否则挂一档；阈值网格搜索。只作次要对照。
-3. **同一监督信号 + 成本决策层**（[`ml-pipeline.md`](ml-pipeline.md) 2.8 节），或等价的「预测再优化」：`argmax_a [P_fill(a) × 价差收益(a) − (1 − P_fill(a)) × 清扫成本 − 逆向选择(a)]`（Fabre 和 Ragel 2023）。**RL 必须显著好于这一条，而不只是好于第 1、2 条。**
-4. 解析解：Cartea 和 Jaimungal（2015）限价 + 市价；Cartea 和 Jaimungal（2016）、Lehalle 和 Neuman（2019）带信号。参数从数据校准。
+切片的执行成本（以基点计，越小越好），参考价用**决策时刻的中间价** $m_0$：
 
-## 3. 算法选择
+$$
+C = \frac{10^4}{q^*\, m_0}\Big[\ \underbrace{d \sum_{i \in \text{fills}} v_i\,(p_i - m_0)}_{\text{切片内成交}} \;+\; \underbrace{d\, q^{\text{rem}}_N\,(p^{\text{clean}} - m_0)}_{\text{窗口结束时按规则清扫}}\ \Big]
+$$
 
-| 方法 | 要在线探索 | 能纯离线 | 可解释 | 依赖模拟器 | 适用 |
+$v_i, p_i$ 是第 $i$ 笔成交的量和价，$p^{\text{clean}}$ 是清扫剩余量的平均成交价。
+
+**逐步奖励**取每一步内实现的成本，最后一步加上清扫：
+
+$$
+r_n = -\frac{10^4\, d}{q^*\, m_0} \sum_{i:\ t_i \in (t_n, t_{n+1}]} v_i\,(p_i - m_0),
+\qquad
+r_{N-1} \mathrel{+}= -\frac{10^4\, d}{q^*\, m_0}\, q^{\text{rem}}_N\,(p^{\text{clean}} - m_0)
+$$
+
+于是 $\sum_n r_n = -C$，最大化累计奖励就等于最小化切片成本。
+
+**成本可以拆成两部分**，这说明了信号为什么有用：
+
+$$
+d\,(p_i - m_0) = \underbrace{d\,(p_i - m_{t_i})}_{\text{价差项：相对当时中间价付了多少}} + \underbrace{d\,(m_{t_i} - m_0)}_{\text{时机项：成交前价格漂了多少}}
+$$
+
+- 吃单时价差项约为 $+\tfrac{s}{2}$（付半个价差），挂单成交时约为 $-\tfrac{s}{2}$（赚半个价差）。
+- 时机项由价格漂移决定，**这正是 OBI / OFI 信号能预测的部分**。所以信号必须进状态。
+
+**为什么参考价用 $m_0$ 而不是母单到达价？** 到达价包含切片开始之前的全部漂移，切片内的动作控制不了，只会增加方差。
+
+**清扫成本必须进奖励。** 否则策略会一直挂深档等便宜价，把未成交的风险推给排程层（reward hacking）。
+
+**加密奖励：基于势函数的塑形。** 只在最后一步给清扫成本会让奖励很稀疏。用势函数 $\Phi$ 塑形不改变最优策略（Ng、Harada、Russell 1999）：
+
+$$
+\tilde r_n = r_n + \gamma\,\Phi(s_{n+1}) - \Phi(s_n),
+\qquad
+\Phi(s) = -\frac{10^4}{q^*}\,\frac{q^{\text{rem}}(s)}{m_0}\Big(\frac{S(s)\,\delta}{2} + f_t\Big)
+$$
+
+$\Phi(s)$ 就是「如果现在把剩余量全部吃掉」的预期成本（$S$ 为价差 tick 数，$\delta$ 为 tick，$f_t$ 为吃单费用）。每成交一部分，势函数就回升，奖励因此变密。
+
+**风险偏好（可选）。** 均值-方差或 CVaR 目标：
+
+$$
+J_\lambda(\pi) = \mathbb{E}_\pi[-C] - \lambda\,\mathrm{Var}_\pi(C),
+\qquad
+J_\alpha(\pi) = -\mathrm{CVaR}_\alpha(C) = -\mathbb{E}\big[C \mid C \ge \mathrm{VaR}_\alpha(C)\big]
+$$
+
+评估时可以把切片内的市场漂移 $d(m_N - m_0)$ 当控制变量降方差，**训练时不要**，否则会抹掉信号带来的择时收益。
+
+### 2.5 价值函数和 Bellman 方程
+
+有限时域、不打折（$\gamma = 1$）。策略 $\pi$ 的价值函数和动作价值函数：
+
+$$
+V^\pi_n(s) = \mathbb{E}_\pi\Big[\sum_{k=n}^{N-1} r_k \,\Big|\, s_n = s\Big],
+\qquad
+Q^\pi_n(s, a) = \mathbb{E}\big[r_n + V^\pi_{n+1}(s_{n+1}) \,\big|\, s_n = s, a_n = a\big]
+$$
+
+最优动作价值满足 Bellman 最优方程，终止条件就是清扫：
+
+$$
+Q^*_n(s, a) = \mathbb{E}\Big[r_n + \max_{a' \in \mathcal{A}(s_{n+1})} Q^*_{n+1}(s_{n+1}, a') \,\Big|\, s_n = s, a_n = a\Big],
+\qquad
+Q^*_N(s, \cdot) \equiv 0
+$$
+
+（清扫成本已经计入 $r_{N-1}$。）因为剩余时间 $\frac{t_N - t_n}{T}$ 在状态里，可以去掉下标 $n$，用一个函数 $Q^*(s, a)$ 表示。
+
+**和监督模块的关系。** 对一步决策，$Q$ 有显式结构。以买单的 `TAKE` 和 `JOIN` 为例（成本以价格计，再乘以 $-\frac{10^4}{m_0}$ 换成奖励）：
+
+$$
+Q(s, \texttt{TAKE}) \approx -\Big(\tfrac{s}{2} + f_t + \text{impact}\Big) + \text{continuation}
+$$
+
+$$
+Q(s, \texttt{JOIN}) \approx -\sum_{k \in \{\uparrow, \downarrow, 0\}} \hat\pi^{k}\Big[q_k\big(-\tfrac{s}{2} + f_m\big) + (1 - q_k)\,\big(\text{价格变化}_k + \tfrac{s}{2} + f_t\big)\Big] + \text{continuation}
+$$
+
+去掉 continuation 项，就是 [`ml-pipeline.md`](ml-pipeline.md) 2.8 节的成本决策层。**所以「监督模块 + 一步决策」是 $Q$ 的一步近似**，RL 补上的是 continuation：现在不成交、下一步还能做什么的价值（比如排队位置的期权价值）。
+
+## 3. 强化学习有哪几类
+
+| 类别 | 代表算法 | 核心公式 | 要在线探索 | 能纯离线 | 适合我们吗 |
 |---|---|---|---|---|---|
-| 监督「预测再优化」（成交概率、markout、清扫成本 + 一步决策） | 否 | 是 | **高** | 低 | **第一步** |
-| Contextual bandit（LinUCB、Thompson、DR 离线学习） | 小幅（安全集内） | 有日志时可以 | 高 | 低 | **第二步** |
-| 行为克隆 | 否 | 是 | 中 | 无 | 离线 RL 的初始化和安全基线 |
-| 离线 RL（离散 CQL / BCQ、IQL、TD3+BC），或拟合 Q 迭代 + GBDT | 否 | 是 | 低到中 | 中 | 第三步，可选 |
-| DQN / DDQN / PPO | 是 | 否 | 低 | **高** | 模拟器内的研究对照 |
-| SAC / TD3 | 是 | 否 | 低 | 高 | 连续动作和离散 tick 不匹配，不推荐起步 |
-| 风险敏感 Q-learning + 决策树蒸馏 | 是 | 否 | **高** | 高 | 可能的最终上线形态（Vyetrenko 和 Xu 2019） |
+| **Contextual bandit** | ε-greedy、LinUCB、Thompson、DR 离线策略学习 | $\pi(x) = \arg\max_a \hat\mu(x, a)$，只学一步的期望收益 | 少量（安全集内） | 有随机化日志时可以 | **最适合起步** |
+| 值函数（无模型） | Q-learning、DQN、Double DQN | $\big(r + \gamma Q_{\bar\theta}(s', \arg\max_{a'} Q_\theta(s', a')) - Q_\theta(s, a)\big)^2$ | 是 | 否 | 只在模拟器里 |
+| 策略梯度 | REINFORCE、A2C、PPO | $\nabla J = \mathbb{E}[\nabla \log \pi_\theta(a\mid s)\,\hat A]$；PPO 截断 $\min(\rho \hat A, \mathrm{clip}(\rho, 1\pm\epsilon)\hat A)$ | 是 | 否 | 只在模拟器里 |
+| 连续动作 actor-critic | DDPG、TD3、SAC | SAC：$\max \mathbb{E}\big[\sum r + \alpha \mathcal{H}(\pi(\cdot\mid s))\big]$ | 是 | 否 | 不推荐（价格是离散 tick） |
+| 基于模型 | Dyna、MPC、MuZero | 学 $\hat P(s'\mid s, a)$ 再规划 | 视情况 | 可以 | 难点就是模型本身（= 模拟器） |
+| **离线 RL** | BCQ、CQL、IQL、TD3+BC、FQI | 在固定日志上学，限制策略不偏离日志覆盖的动作 | 否 | **是** | **第二步** |
+| 模仿学习 | 行为克隆、DAgger、逆强化学习 | BC：$\min_\theta -\mathbb{E}_{(s,a)\sim\mathcal{D}} \log \pi_\theta(a\mid s)$ | 否 | 是 | 做离线 RL 的初始化和安全基线 |
+| 风险敏感 / 分布式 | QR-DQN、CVaR-RL | 学回报的分位数 $\theta_\tau(s, a)$，优化 CVaR | 是 | 有离线版本 | 尾部成本重要时加 |
+| 约束 RL | CPO、拉格朗日 PPO | 见 2.3 节的 $\mathcal{L}(\pi, \nu)$ | 是 | 有离线版本 | 我们用硬屏蔽代替 |
+| 分层 RL | Options、feudal | 上层选子任务，下层执行 | — | — | 我们的「排程 + 下单方式」就是两层，上层不学 |
+| 多智能体 | MADDPG、自博弈 | — | — | — | 不需要 |
 
-为什么先走监督和 bandit：
+## 4. 按我们的约束比较
 
-- **不能在线探索**：真实交易里的探索有真实成本。即使探索，也只在「安全动作集」里小比例随机（比如 2–10% 的决策在 2–3 个合理动作里随机），并记录倾向得分。
-- **样本少**：bandit 只需估计「状态 → 每个动作的即时收益」，是回归问题，比时序差分学习的样本效率高得多。
-- **可解释**：线性或树模型的 bandit、成交概率曲线，都能直接拿给交易员和模型验证看。
-- **什么时候需要多步 RL**：撤单重挂、队列位置的期权价值显著时，一步模型会低估「排队等待」的价值。那时再上离线 RL，用行为克隆初始化，用离线策略评估（OPE）和模拟器双重评估。
+我们的约束：**样本少**（每只股票一年约 250 个全天母单，切片级别多一些）、**不能在线自由探索**（探索有真实成本）、**要可解释、可验证**（模型风险管理和算法交易监管）、**模拟器有偏**（回放没有自身冲击和真实队列位置）、**只有 CPU**。
 
-### 分阶段路线
+| 方法 | 样本效率 | 不需要在线探索 | 能离线评估 | 可解释 | 不依赖模拟器 | 训练稳定 | i9 CPU 成本 | 综合 |
+|---|---|---|---|---|---|---|---|---|
+| 监督 + 一步决策（非 RL 基线） | 5 | 5 | 4 | 5 | 5 | 5 | 分钟 | 基线 |
+| **Contextual bandit + DR** | 5 | 4 | **5** | 5 | 5 | 5 | 分钟 | **首选** |
+| 约束 FQI + GBDT | 4 | 5 | 4 | 4 | 4 | 4 | 分钟到小时 | **第二步** |
+| 离散 IQL | 3 | 5 | 3 | 2 | 4 | 4 | 小时 | 备选 |
+| 离散 CQL | 3 | 5 | 3 | 2 | 4 | 3 | 小时 | 备选 |
+| DQN / DDQN（模拟器） | 2 | 1 | 2 | 1 | 1 | 2 | 小时 | 研究 |
+| PPO（模拟器） | 1 | 1 | 2 | 1 | 1 | 3 | 小时 | 研究 |
+| SAC / TD3 | 2 | 1 | 2 | 1 | 1 | 3 | 小时 | 不推荐 |
 
+（5 分最好。分数是基于文献和上面约束的定性判断，不是实测。）
+
+**为什么 bandit 最可靠：**
+
+1. **没有时序信用分配**：只估计 $\mathbb{E}[r \mid x, a]$，是普通的回归问题，误差不会通过 Bellman 备份累积放大。
+2. **能严格离线评估**：只要日志里有倾向得分，DR 估计量是无偏的（只要倾向得分或奖励模型有一个是对的），还有标准误，可以设置上线门槛。
+3. **可解释**：奖励模型是 GBDT，策略可以压成深度 2–4 的策略树。
+4. **出错有上界**：宏动作只持续几秒，结束就清扫或回到规则。
+
+**它的代价**：一步决策忽略了「现在不成交、下一步还能做什么」的价值。宏动作（「挂在 X 档、持有 $\tau_h$ 秒、没成交就按规则处理」）把一段多步交互压成一步，可以部分弥补。只有当分析表明多步效应显著（例如撤单重挂、排队位置的价值很大）时，才进入第二步。
+
+**为什么第二步选约束 FQI 而不是深度离线 RL：** 动作只有 6 个、特征 10–30 个，GBDT 拟合 $Q$ 就够了；有限时域下 $N$ 次迭代就是精确的逆向归纳；行为约束（只在日志里出现得足够多的动作上取 max）直接避免了离线 RL 最大的问题，也就是对没见过的动作的外推误差。IQL 是它的神经网络版本，作为备选。
+
+## 5. 数据前提：日志里要有随机化
+
+所有离线方法都需要知道「日志策略 $\pi_0$ 在每个状态下选每个动作的概率」。如果日志全是确定性规则产生的，规则没选过的动作就永远无法评估（覆盖度问题）。做法：
+
+$$
+\pi_0(a \mid x) =
+\begin{cases}
+1 - \varepsilon + \dfrac{\varepsilon}{\lvert \mathcal{A}_{\text{safe}}(x) \rvert} & a = \text{规则的动作} \\[2mm]
+\dfrac{\varepsilon}{\lvert \mathcal{A}_{\text{safe}}(x) \rvert} & a \in \mathcal{A}_{\text{safe}}(x),\ a \ne \text{规则的动作}
+\end{cases}
+\qquad \varepsilon \in [0.02, 0.10]
+$$
+
+$\mathcal{A}_{\text{safe}}(x)$ 是 2–3 个在当前状态下都合理的动作。每次决策记录 $(x_i, a_i, \pi_0(a_i \mid x_i), r_i)$。**这是最需要尽早落地的工程措施。**
+
+## 6. 推荐方案：宏动作 contextual bandit + DR
+
+### 6.1 问题设定
+
+- **上下文** $x$：第 2.2 节的状态。
+- **宏动作** $a = (\text{类型}, \text{档位}, \tau_h)$，例如 {吃单, 挂一档持有 2 秒, 挂一档持有 5 秒, 挂进价差持有 2 秒}。到期没成交就撤单，交回规则。
+- **奖励** $r$：这个宏动作覆盖的数量在持有期内的成本（相对决策时刻中间价，含到期后的处理成本），取负号、以基点计：
+
+$$
+r_i = -\frac{10^4\, d}{v^{\text{target}}_i\, m_{t_i}}\Big[\sum_{j \in \text{fills}_i} v_j (p_j - m_{t_i}) + v^{\text{left}}_i\,(p^{\text{after}}_i - m_{t_i})\Big]
+$$
+
+$v^{\text{target}}_i$ 是这个宏动作要处理的量，$v^{\text{left}}_i$ 是到期没成交、交回规则处理的部分，$p^{\text{after}}_i$ 是这部分后来的成交均价（或按吃单估计）。
+
+### 6.2 奖励模型（直接法）
+
+用 LightGBM 拟合 $\hat\mu(x, a) \approx \mathbb{E}[r \mid x, a]$，动作作为 one-hot 特征。策略是在允许的动作里取最大：
+
+$$
+\hat\pi(x) = \arg\max_{a \in \mathcal{A}(x)} \hat\mu(x, a)
+$$
+
+### 6.3 离线评估：IPW、SNIPW、DR
+
+用一段**没参与训练**的日志评估新策略 $\pi$（确定性策略时 $\pi(a \mid x) = \mathbb{1}[a = \pi(x)]$）：
+
+$$
+\hat V_{\text{IPW}}(\pi) = \frac{1}{n}\sum_{i=1}^{n} \frac{\pi(a_i \mid x_i)}{\pi_0(a_i \mid x_i)}\, r_i,
+\qquad
+\hat V_{\text{SNIPW}}(\pi) = \frac{\sum_i w_i r_i}{\sum_i w_i},\quad w_i = \frac{\pi(a_i \mid x_i)}{\pi_0(a_i \mid x_i)}
+$$
+
+$$
+\hat V_{\text{DR}}(\pi) = \frac{1}{n}\sum_{i=1}^{n}\Big[\underbrace{\sum_{a} \pi(a \mid x_i)\,\hat\mu(x_i, a)}_{\text{直接法}} + \underbrace{w_i\,\big(r_i - \hat\mu(x_i, a_i)\big)}_{\text{用实际奖励修正模型误差}}\Big]
+$$
+
+- IPW 无偏但方差大；直接法方差小但有模型偏差；**DR 只要倾向得分和奖励模型有一个正确就无偏**，方差介于两者之间（Dudík、Langford、Li 2011）。
+- 权重截断 $w_i \leftarrow \min(w_i, M)$（如 $M = 20$）用偏差换方差。
+- 标准误：$\widehat{\mathrm{se}} = \mathrm{sd}(\Gamma_i)/\sqrt{n}$，其中 $\Gamma_i$ 是上式方括号里的每样本项。同一母单内的样本相关，标准误要按母单聚类计算。
+- **上线门槛**：$\hat V_{\text{DR}}(\hat\pi) - \hat V_{\text{DR}}(\pi_0)$ 的 95% 置信下界大于 0。
+
+### 6.4 让策略可解释：策略树
+
+把每个样本对每个动作的 DR 分数
+
+$$
+\Gamma_i(a) = \hat\mu(x_i, a) + \frac{\mathbb{1}[a_i = a]}{\pi_0(a_i \mid x_i)}\big(r_i - \hat\mu(x_i, a_i)\big)
+$$
+
+当作「如果当时选 $a$ 能得到的奖励」的无偏估计，在深度为 $D$ 的决策树类 $\Pi_D$ 里找最优策略（Athey 和 Wager 2021）：
+
+$$
+\hat\pi_{\text{tree}} = \arg\max_{\pi \in \Pi_D} \sum_{i=1}^{n} \Gamma_i\big(\pi(x_i)\big)
+$$
+
+深度 2–3 的树就能写成交易员看得懂的规则，例如「价差 = 1 档且 $\hat\pi^{\uparrow} > 0.45$ 时吃单」。
+
+### 6.5 在线：安全集内的 Thompson 采样
+
+上线后继续小比例探索、持续更新。每个动作一个贝叶斯线性回归 $r = \theta_a^\top x + \varepsilon$，$\varepsilon \sim \mathcal{N}(0, \sigma^2)$，先验 $\theta_a \sim \mathcal{N}(0, \lambda^{-1} I)$。后验：
+
+$$
+A_a = \lambda I + \frac{1}{\sigma^2}\sum_{i: a_i = a} x_i x_i^\top,
+\qquad
+b_a = \frac{1}{\sigma^2}\sum_{i: a_i = a} r_i x_i,
+\qquad
+\theta_a \mid \mathcal{D} \sim \mathcal{N}\big(A_a^{-1} b_a,\ A_a^{-1}\big)
+$$
+
+每次决策从后验抽 $\tilde\theta_a$，选 $\arg\max_{a \in \mathcal{A}_{\text{safe}}(x)} \tilde\theta_a^\top x$。LinUCB 是它的确定性版本：$\arg\max_a \hat\theta_a^\top x + \alpha\sqrt{x^\top A_a^{-1} x}$。**选中的概率要记录下来**（Thompson 的倾向得分可以用蒙特卡洛估计），供下一轮离线评估用。
+
+### 6.6 代码
+
+奖励模型、贪心策略和三种离线评估（已在模拟数据上跑通：DR 估计在真值的 2 个标准误以内）：
+
+```python
+import numpy as np
+import lightgbm as lgb
+
+
+def fit_reward_model(X, a, r, n_actions, w=None):
+    """Direct method: one LightGBM regressor on [x, one-hot(a)] -> r (reward = -cost in bp)."""
+    A = np.eye(n_actions)[a]
+    model = lgb.LGBMRegressor(n_estimators=300, learning_rate=0.05, num_leaves=31,
+                              min_child_samples=200, subsample=0.8, subsample_freq=1,
+                              colsample_bytree=0.8, verbose=-1)
+    model.fit(np.hstack([X, A]), r, sample_weight=w)
+    return model
+
+
+def predict_all_actions(model, X, n_actions):
+    """mu_hat[i, a] = E[r | x_i, a]."""
+    n = len(X)
+    return np.column_stack([
+        model.predict(np.hstack([X, np.tile(np.eye(n_actions)[k], (n, 1))]))
+        for k in range(n_actions)])
+
+
+def greedy_policy(mu_hat, mask):
+    """pi(x) = argmax over allowed actions; mask[i, a] = 1 if action a is allowed at x_i."""
+    return np.where(mask, mu_hat, -np.inf).argmax(axis=1)
+
+
+def off_policy_value(pi_a, a, r, p, mu_hat, clip=20.0):
+    """IPW, self-normalised IPW and doubly robust estimates of a deterministic policy's value.
+    pi_a: action chosen by the new policy; a, r, p: logged action, reward, propensity pi_0(a|x)."""
+    match = (pi_a == a).astype(float)
+    w = np.minimum(match / p, clip)
+    ipw = np.mean(w * r)
+    snipw = np.sum(w * r) / np.sum(w)
+    dm = mu_hat[np.arange(len(a)), pi_a]
+    dr_terms = dm + w * (r - mu_hat[np.arange(len(a)), a])
+    dr = dr_terms.mean()
+    se = dr_terms.std(ddof=1) / np.sqrt(len(a))   # cluster by parent order in practice
+    return {"ipw": ipw, "snipw": snipw, "dr": dr, "dr_se": se}
 ```
-阶段 0  日志
-        子单级：决策时刻的状态、动作、倾向得分、成交明细、撤单、markout(1s/5s/30s)、清扫成本
-        在现行规则里加安全集内的随机化（ε ≈ 2–10%）
-阶段 1  监督模块 + 一步决策
-        成交概率 P_fill(a, h | x)：生存分析，或处理删失的分类器
-        markout 模型、清扫成本模型
-        策略 = argmax 期望节省；和「信号规则版」比
-阶段 2  Contextual bandit（宏动作）
-        动作 = {TAKE, JOIN_L1, IMPROVE, POST_DEEP} × 持有 τ 秒后清扫
-        离线学习和评估：IPW / DR（Open Bandit Pipeline）；奖励模型用线性或 GBDT
-阶段 3  离线 RL（可选）
-        d3rlpy：DiscreteBC → DiscreteCQL / DiscreteBCQ
-        评估：FQE / DR-OPE（SCOPE-RL）+ 校准过的模拟器
-阶段 4  模拟器内的在线 RL（研究）
-        Maskable PPO / DDQN（Stable-Baselines3、CleanRL），参数随机化
-        蒸馏成深度 4–6 的决策树，作为候选上线形态
+
+安全集内的线性 Thompson 采样：
+
+```python
+import numpy as np
+
+
+class LinearThompson:
+    """Per-action Bayesian linear regression r = theta_a' x + noise, theta_a ~ N(0, lam^-1 I).
+    Posterior: A_a = lam I + sum x x' / s2,  b_a = sum r x / s2,  theta_a | data ~ N(A_a^-1 b_a, A_a^-1)."""
+
+    def __init__(self, n_actions, dim, lam=1.0, noise_var=1.0, seed=0):
+        self.A = np.stack([lam * np.eye(dim) for _ in range(n_actions)])
+        self.b = np.zeros((n_actions, dim))
+        self.s2 = noise_var
+        self.rng = np.random.default_rng(seed)
+
+    def act(self, x, allowed):
+        scores = np.full(len(self.b), -np.inf)
+        for k in np.flatnonzero(allowed):
+            cov = np.linalg.inv(self.A[k])
+            theta = self.rng.multivariate_normal(cov @ self.b[k], cov)
+            scores[k] = theta @ x
+        return int(scores.argmax())
+
+    def update(self, x, a, r):
+        self.A[a] += np.outer(x, x) / self.s2
+        self.b[a] += r * x / self.s2
 ```
 
-## 4. 模拟器
+### 6.7 参数怎么选
 
-### 历史回放的局限
-
-| 问题 | 后果 | 缓解 |
+| 参数 | 建议 | 怎么判断 |
 |---|---|---|
-| 没有自身冲击 | 低估吃单成本 | 叠加冲击核（瞬时冲击 + 衰减）；限制单笔不超过一档量的某个比例 |
-| 不知道队列位置 | **高估被动成交**，尤其是假设「挂了就排第一」 | L3 数据精确追踪；L2 用概率队列模型，同时报告保守模型的结果 |
-| 没有反事实 | 评估不了「当时如果挂在 X 档」 | 交互式模拟器 |
-| 逆向选择缺失 | 高估被动成交的收益 | 用真实子单的 markout 校准；回放里用「穿价成交」而不是「触价成交」 |
-| 延迟 | 高估抢到一档的能力 | 用实测延迟分布 |
-| 非平稳 | 过拟合 | 滚动样本外；跨时期压力测试 |
+| 探索率 $\varepsilon$ | 0.02–0.10 | 越大离线评估越准、当期成本越高；用「探索的额外成本 ≈ $\varepsilon \times$ 安全集内动作的平均劣势」估算 |
+| 宏动作持有时长 $\tau_h$ | 和监督信号的 τ 一致（如 1 / 2 / 5 秒） | 信号有效期约 2 次平均价格变动，持有太久信号就失效 |
+| 权重截断 $M$ | 10–50 | 看 $\hat V_{\text{DR}}$ 随 $M$ 的变化，选变化开始平缓的位置 |
+| 奖励模型 | LightGBM，`min_child_samples` 200+，只用不依赖结果的样本权重 | 在留出日上看 $\hat\mu$ 的 MSE 和校准 |
+| 策略树深度 $D$ | 2–3 | 和 GBDT 贪心策略比 $\hat V_{\text{DR}}$，损失不超过 0.1 bp 就用树 |
 
-### 模拟器分层
+## 7. 第二步：离线 RL
 
-| 层 | 类型 | 代表 | 能模拟什么 | CPU |
-|---|---|---|---|---|
-| 1 | 回放 + 队列模型 + 延迟 | hftbacktest | 队列位置、延迟；没有冲击 | 很快 |
-| 2 | 回放 + 冲击叠加 | 自己写传播子 / 衰减核 | 近似冲击 | 快 |
-| 3 | Queue-reactive 类 | Huang、Lehalle、Rosenbaum（2015）；Noble、Rosenbaum、Souilmi（2026）的扩展（有 C++ 代码） | 订单流强度依赖当前队列状态，会对我们的单子做出反应；2026 版复现凹冲击和部分回复 | 快 |
-| — | Hawkes 过程 | `tick` 库；状态依赖 Hawkes（Morariu-Patrichi 和 Pakkanen 2022） | 订单流的聚集和自激 | 中 |
-| — | 解析 SDE 环境 | mbt_gym | 只用来检查 RL 管线能不能复现解析最优解 | 很快 |
-| — | 多主体 | ABIDES、ABIDES-Gym | 完全交互，适合压力测试；校准难、慢 | 慢 |
-| — | GPU 回放 | JAX-LOB | 有撮合，背景订单流是回放 | 需要 GPU |
-| — | 生成式 / 世界模型 | LOBS5、TRADES、MarS | 条件生成订单流，可对注入的订单做出反应 | 需要 GPU，研究跟踪用 |
+### 7.1 带行为约束的拟合 Q 迭代（推荐）
 
-综述：Jain、Firoozye、Kochems、Treleaven（2024），*Limit Order Book Simulations: A Review*。
+先估计行为策略 $\hat\pi_\beta(a \mid s)$（一个多分类器）。第 $j$ 次迭代：
 
-### 怎么验证模拟器
+$$
+y_i^{(j)} = r_i + (1 - \text{done}_i)\max_{a' \in \mathcal{A}_\beta(s'_i)} Q^{(j)}(s'_i, a'),
+\qquad
+\mathcal{A}_\beta(s') = \Big\{a' \in \mathcal{A}(s') : \hat\pi_\beta(a' \mid s') \ge \tau \max_{b}\hat\pi_\beta(b \mid s')\Big\}
+$$
 
-- **分布层面（stylized facts）**：价差、深度、OBI 分布，事件间隔，收益厚尾，波动聚集，订单流符号的长记忆，日内 U 型。指标可以直接借 LOB-Bench（Nagy 等 2025）。
-- **冲击响应（对执行最重要）**：单笔市价单后的价格响应曲线；元订单冲击的平方根律、凹性和完成后的部分回复；被动单的成交概率曲线和真实子单对比。
-- **sim-to-real 校验（上线门槛）**：
-  1. **自身订单回放**：把历史上真实发出的子单注入模拟器，比较成交率、成交时间分布和 markout 曲线。
-  2. **策略排名一致性**：3–5 个已有实盘结果的规则策略，在模拟器里的排名要和实盘一致（Spearman 相关）。
-  3. **敏感性**：扰动队列模型、冲击系数和延迟，结论应当不变。
-  4. **参数随机化**：训练时随机化冲击强度、撤单率、延迟，避免过拟合单一校准值。
+$$
+Q^{(j+1)} = \arg\min_{Q \in \mathcal{F}_{\text{GBDT}}} \sum_i \big(Q(s_i, a_i) - y_i^{(j)}\big)^2
+$$
 
-## 5. 评估与上线
+- $\mathcal{A}_\beta$ 只保留日志里出现得足够多的动作（BCQ 的思路，Fujimoto 等 2019），$\tau$ 取 0.05–0.3。$\tau \to 0$ 退化为普通 FQI（会过度乐观），$\tau \to 1$ 退化为行为克隆。
+- 剩余时间在状态里时，迭代 $N$ 次（切片的决策步数）就是精确的逆向归纳。
+- 可以加单调约束，例如 $Q(s, \texttt{TAKE})$ 对价差单调递减。
 
+```python
+import numpy as np
+import lightgbm as lgb
+
+
+def _xa(S, a, K):
+    return np.hstack([S, np.eye(K)[a]])
+
+
+def constrained_fqi(S, A, R, S2, done, mask2, n_steps, K, behaviour_prob2, tau=0.1, params=None):
+    """Batch-constrained fitted Q iteration with LightGBM (finite horizon, gamma = 1).
+
+    S, A, R, S2, done: transitions from the logs (done = 1 at the slice's last step; its R already
+                       includes the clean-up cost).
+    mask2[i, a]:       action a is allowed at S2[i] (progress-band mask).
+    behaviour_prob2:   estimated pi_beta(a | S2[i]) for every a, shape (n, K).
+    Only actions with pi_beta(a|s') >= tau * max_b pi_beta(b|s') enter the max (BCQ-style support
+    constraint), so the backup never trusts actions the logs barely contain.
+    n_steps:           horizon in decisions; with time-to-go in the state, n_steps iterations are exact
+                       backward induction.
+    """
+    params = params or dict(n_estimators=200, learning_rate=0.05, num_leaves=31,
+                            min_child_samples=200, verbose=-1)
+    support = behaviour_prob2 >= tau * behaviour_prob2.max(axis=1, keepdims=True)
+    allowed = mask2 & support
+    q = None
+    for _ in range(n_steps):
+        if q is None:
+            target = R.copy()
+        else:
+            q2 = np.column_stack([q.predict(_xa(S2, np.full(len(S2), k), K)) for k in range(K)])
+            q2 = np.where(allowed, q2, -np.inf).max(axis=1)
+            q2 = np.where(np.isfinite(q2), q2, 0.0)
+            target = R + (1 - done) * q2
+        q = lgb.LGBMRegressor(**params).fit(_xa(S, A, K), target)
+    return q
 ```
-离线回测（回放 + 队列模型）
-  → 模拟器评估（含敏感性）
-  → 离线策略评估（IPW / DR / FQE，需要随机化日志）
-  → 影子运行（只记录会怎么做，不下单）
-  → 小流量随机对照
-  → 逐步放量 + 持续监控
+
+（在一个 5 步的玩具切片上验证过：信号有利时学到挂单，信号不利时学到「先等、最后一步再吃」，和手算的最优解一致。）
+
+### 7.2 IQL（神经网络备选）
+
+IQL（Kostrikov、Nair、Levine）从不在备份里查询日志之外的动作。三个损失：
+
+$$
+\mathcal{L}_V(\psi) = \mathbb{E}_{(s,a)\sim\mathcal{D}}\Big[L_2^{\kappa}\big(Q_{\bar\theta}(s, a) - V_\psi(s)\big)\Big],
+\qquad
+L_2^{\kappa}(u) = \big\lvert \kappa - \mathbb{1}[u < 0] \big\rvert\, u^2
+$$
+
+$$
+\mathcal{L}_Q(\theta) = \mathbb{E}_{(s,a,r,s')\sim\mathcal{D}}\Big[\big(r + V_\psi(s') - Q_\theta(s, a)\big)^2\Big]
+$$
+
+$$
+\mathcal{L}_\pi(\phi) = -\mathbb{E}_{(s,a)\sim\mathcal{D}}\Big[\exp\big(\beta\,(Q_{\bar\theta}(s, a) - V_\psi(s))\big)\log \pi_\phi(a \mid s)\Big]
+$$
+
+- 期望分位数 $\kappa \in (0.5, 1)$：$\kappa$ 越接近 1，$V$ 越接近日志里动作的最大 $Q$（越激进）。常用 0.7–0.9。
+- $\beta$ 是优势加权的温度：$\beta \to 0$ 是行为克隆，越大越贪心。常用 3–10，权重截断到 100。
+- 网络：2 层 MLP，256 单元，Adam，学习率 3e-4。$10^6$ 条转移在 i9 上训练约 1–3 小时。
+
+### 7.3 CQL（另一个备选）
+
+在 TD 损失上加一个保守项，压低日志之外动作的 $Q$ 值（Kumar 等 2020）：
+
+$$
+\mathcal{L}_{\text{CQL}}(\theta) = \alpha\,\mathbb{E}_{s\sim\mathcal{D}}\Big[\log\sum_{a}\exp Q_\theta(s, a) - \mathbb{E}_{a\sim\mathcal{D}(\cdot\mid s)} Q_\theta(s, a)\Big] + \frac{1}{2}\mathbb{E}\Big[\big(Q_\theta(s, a) - \mathcal{B}Q_{\bar\theta}(s, a)\big)^2\Big]
+$$
+
+$\alpha$ 对结果很敏感（太小过度乐观，太大退化为行为克隆），需要用离线评估来选；这是它排在 IQL 后面的原因。
+
+### 7.4 离线 RL 怎么评估：拟合 Q 评估（FQE）
+
+对一个固定策略 $\pi$，用和 FQI 一样的回归，但备份时用 $\pi$ 的动作而不是取 max：
+
+$$
+y_i^{(j)} = r_i + (1 - \text{done}_i)\, Q_\pi^{(j)}\big(s'_i, \pi(s'_i)\big),
+\qquad
+\hat V(\pi) = \frac{1}{\lvert \mathcal{D}_0 \rvert}\sum_{s_0 \in \mathcal{D}_0} Q_\pi\big(s_0, \pi(s_0)\big)
+$$
+
+$\mathcal{D}_0$ 是各切片的初始状态。FQE 和第 4 节的模拟器评估要一起看：两者都显示改善，才进入影子运行。
+
+## 8. 模拟器里的在线 RL（研究用）
+
+### 8.1 PPO
+
+用于在校准过的模拟器里做研究对照，或者验证 bandit / 离线 RL 的结论。
+
+$$
+\rho_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)},
+\qquad
+\mathcal{L}^{\text{CLIP}}(\theta) = -\mathbb{E}_t\Big[\min\big(\rho_t \hat A_t,\ \mathrm{clip}(\rho_t, 1-\epsilon, 1+\epsilon)\,\hat A_t\big)\Big]
+$$
+
+优势用 GAE：
+
+$$
+\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t),
+\qquad
+\hat A_t = \sum_{l \ge 0} (\gamma\lambda)^l\, \delta_{t+l}
+$$
+
+总损失 $\mathcal{L} = \mathcal{L}^{\text{CLIP}} + c_v\,\mathbb{E}\big[(V_\theta(s_t) - \hat R_t)^2\big] - c_e\,\mathbb{E}\big[\mathcal{H}(\pi_\theta(\cdot \mid s_t))\big]$。
+
+| 超参数 | 起点 |
+|---|---|
+| $\gamma$ / $\lambda$ | 1.0 / 0.95（有限时域） |
+| $\epsilon$（截断） | 0.2 |
+| 学习率 | 3e-4，线性衰减 |
+| 每次更新的步数 / minibatch / epoch | 4096 / 256 / 10 |
+| $c_v$ / $c_e$ | 0.5 / 0.01 |
+| 网络 | 2 层 MLP，64–128 单元，tanh |
+| 并行环境 | i9 上 8–16 个进程 |
+
+### 8.2 动作屏蔽和 PPO 的辅助函数
+
+屏蔽的数学形式是 $\pi(a \mid s) = \dfrac{\exp(z_a)\,\mathbb{1}[a \in \mathcal{A}(s)]}{\sum_{b \in \mathcal{A}(s)} \exp(z_b)}$：
+
+```python
+import numpy as np
+import torch
+
+
+def masked_logits(logits, mask):
+    """Disallowed actions get -inf, so softmax gives them probability exactly 0."""
+    return logits.masked_fill(~mask, float("-inf"))
+
+
+def ppo_loss(new_logp, old_logp, adv, clip=0.2):
+    """L_clip = -E[min(rho * A, clip(rho, 1 - eps, 1 + eps) * A)],  rho = pi_new / pi_old."""
+    rho = torch.exp(new_logp - old_logp)
+    return -torch.min(rho * adv, torch.clamp(rho, 1 - clip, 1 + clip) * adv).mean()
+
+
+def gae(rewards, values, gamma=1.0, lam=0.95):
+    """Generalised advantage estimation for one episode; values has len(rewards) + 1 entries (last = 0)."""
+    adv, last = np.zeros(len(rewards)), 0.0
+    for t in reversed(range(len(rewards))):
+        delta = rewards[t] + gamma * values[t + 1] - values[t]
+        last = delta + gamma * lam * last
+        adv[t] = last
+    return adv
 ```
 
-**指标**：
+现成实现：Stable-Baselines3 的 SB3-Contrib 有 `MaskablePPO`（MIT）。训练出的策略要**蒸馏成深度 4–6 的决策树**（用策略在大量状态上的动作当标签训练分类树），树的表现不显著变差才可能上线（Vyetrenko 和 Xu 2019）。
 
-- 母单级：相对到达价的执行差（IS）、相对区间 VWAP、完成率、进度带越界次数、成本的 95% 分位或 CVaR。
-- 子单级：被动成交比例、价差捕获、markout（1s / 5s / 30s）、清扫成本、撤单率、平均挂单时长。
-- 按股票流动性、价差（大 / 小 tick）、时段、波动状态分层报告。
+## 9. 解析基线
 
-### 要多少订单才能测出差异
+RL 和 bandit 都要和解析解比，参数从数据校准。
 
-每组需要的母单数（双侧 α = 5%，power = 80%）：`n = 2 × (1.96 + 0.84)² × σ² / Δ²`，Δ 是想测出的成本差异
+**Almgren-Chriss（排程层）**：线性临时冲击 $\eta$、波动 $\sigma$、风险厌恶 $\lambda$，最优剩余持仓轨迹
 
-| 单笔成本标准差 σ | Δ = 1 bp | Δ = 2 bp | Δ = 3 bp |
+$$
+x(t) = X\,\frac{\sinh\big(\kappa (T - t)\big)}{\sinh(\kappa T)},
+\qquad
+\kappa = \sqrt{\frac{\lambda\sigma^2}{\eta}}
+$$
+
+$\lambda \to 0$ 时退化为 TWAP 的线性轨迹。
+
+**下单方式层**：Cartea 和 Jaimungal（2015）的限价 + 市价单最优执行（平时挂单赚价差、进度落后时用市价单补），以及 Cartea 和 Jaimungal（2016）、Lehalle 和 Neuman（2019）把订单流信号加进最优执行。它们的解在简单情形下是检验 RL 管线的「标准答案」：RL 在这些模型的模拟环境（如 mbt_gym）里应当能复现解析最优解。
+
+## 10. 模拟器
+
+### 10.1 历史回放的偏差和修正
+
+| 问题 | 后果 | 修正 |
+|---|---|---|
+| 没有自身冲击 | 低估吃单成本 | 叠加冲击核（10.2） |
+| 不知道队列位置 | **高估被动成交** | L3 精确追踪；L2 用概率队列模型（10.3），同时报告保守版本 |
+| 没有反事实 | 评估不了「当时挂在 X 档」 | 交互式模拟器（queue-reactive） |
+| 延迟 | 高估抢到一档的能力 | 注入实测延迟分布 |
+| 非平稳 | 过拟合 | 滚动样本外，跨时期压力测试 |
+
+### 10.2 冲击叠加（传播子模型）
+
+在历史中间价上叠加自己订单造成的冲击（Bouchaud 等 2004）：
+
+$$
+\tilde m_t = m_t^{\text{hist}} + \sum_{s \le t} G(t - s)\, \varepsilon_s\, v_s^{\beta},
+\qquad
+G(\ell) = \frac{G_0}{(1 + \ell/\ell_0)^{\gamma}}
+$$
+
+$\varepsilon_s$ 是自己第 $s$ 笔主动成交的方向，$v_s$ 是量，$\beta \approx 0.5$（凹冲击），$\gamma$ 控制衰减速度。$G_0, \ell_0, \gamma$ 用自己的成交数据估计。
+
+### 10.3 L2 数据上的概率队列模型
+
+只有按价位聚合的数据时，不知道撤单发生在我们前面还是后面。设我们前面的量为 $Q_a$，后面的量为 $Q_b$：
+
+- 该档有成交量 $v$：$Q_a \leftarrow \max(Q_a - v, 0)$，$Q_a$ 降到 0 后再有成交，我们才开始成交。
+- 该档撤单量 $\Delta$：$Q_a \leftarrow Q_a - \Delta \cdot \dfrac{f(Q_a)}{f(Q_a) + f(Q_b)}$，常用 $f(x) = x^n$（$n = 1$ 均匀，$n > 1$ 表示撤单更可能发生在队尾，模型更乐观）。
+
+$n$ 要用自己的真实子单校准；同时报告 $n = 1$ 的保守结果。hftbacktest（MIT）内置了这类模型和延迟模型，是第一层模拟器的好起点。
+
+### 10.4 Queue-reactive 模型（交互式）
+
+各档的下单、撤单、成交强度只依赖当前队列状态（Huang、Lehalle、Rosenbaum 2015）：
+
+$$
+\lambda^{\text{limit}}_i(q),\quad \lambda^{\text{cancel}}_i(q),\quad \lambda^{\text{market}}_i(q),
+\qquad
+\hat\lambda^{e}_i(q) = \frac{\#\{\text{类型 } e \text{ 的事件，队列状态为 } q\}}{\text{处在状态 } q \text{ 的总时长}}
+$$
+
+模拟时按这些强度抽下一个事件；我们的订单改变了队列，强度随之改变，于是有了反事实。Noble、Rosenbaum、Souilmi（2026）把它扩展到大 tick 资产（状态 = 价差 + 量失衡，加幂律衰减的反馈核，复现凹冲击和部分回复），有 C++ 实现（MIT）。
+
+### 10.5 上线门槛：模拟器校验
+
+1. **自身订单回放**：把历史上真实发出的子单注入模拟器，比较成交率、成交时间分布和 markout 曲线（可靠性图、分档 KS 检验）。
+2. **策略排名一致性**：3–5 个有实盘结果的规则策略，模拟器里的排名要和实盘一致（Spearman 相关）。
+3. **敏感性**：扰动队列模型参数 $n$、冲击参数、延迟，结论不变。
+4. **训练时参数随机化**：随机化冲击强度、撤单率、延迟，避免过拟合单一校准值。
+
+## 11. 评估和样本量
+
+评估层级：离线回测 → 模拟器 → 离线策略评估（DR / FQE）→ 影子运行 → 小流量随机对照 → 逐步放量。
+
+**每组需要的样本数**（双侧 $\alpha = 5\%$，功效 $1-\beta = 80\%$）：
+
+$$
+n = \frac{2\,(z_{1-\alpha/2} + z_{1-\beta})^2\,\sigma^2}{\Delta^2} \approx \frac{15.7\,\sigma^2}{\Delta^2}
+$$
+
+| 单笔成本标准差 $\sigma$ | $\Delta = 1$ bp | $\Delta = 2$ bp | $\Delta = 3$ bp |
 |---|---|---|---|
 | 10 bp | 1,570 | 392 | 174 |
 | 30 bp | 14,128 | 3,532 | 1,570 |
 | 50 bp | 39,244 | 9,811 | 4,360 |
 
-让试验可行的办法：
+让试验可行：
 
-1. **主指标换成子单级的**（价差捕获、markout、清扫成本），母单 IS 只当护栏（不显著变差即可）。
-2. **换基准**：相对区间 VWAP 或决策时刻中间价，剔除大部分市场漂移。
-3. **按母单随机化**；按子单或切片随机化时，用按母单聚类的稳健标准误，有效样本量按 `1 + (m − 1)ρ` 折算。
-4. **分层随机化 + CUPED / 回归调整**，用事前可得的变量（股票、规模、价差、波动、时段）。
-5. **序贯检验**（如 mSPRT）做护栏，提前停掉明显变差的组。
+- **主检验用子单级指标**（价差捕获、markout、清扫成本），它们的 $\sigma$ 比母单 IS 小得多；母单 IS 当护栏。
+- **按母单随机化**；按子单随机化时，有效样本量按设计效应折算：$n_{\text{eff}} = \dfrac{n}{1 + (m - 1)\rho}$（$m$ 是每个母单的决策数，$\rho$ 是组内相关）。
+- **CUPED**：用试验前就知道的协变量 $X$（如事前成本预估）降方差：
 
-### 模型风险和监管（通用）
+$$
+Y^{\text{cuped}} = Y - \theta\,(X - \bar X),\qquad \theta = \frac{\mathrm{Cov}(Y, X)}{\mathrm{Var}(X)},\qquad \mathrm{Var}(Y^{\text{cuped}}) = (1 - \rho_{XY}^2)\,\mathrm{Var}(Y)
+$$
 
-- 算法交易监管（如欧盟 MiFID II RTS 6）要求：上线前有开发和测试方法、测试环境与生产隔离、受控部署、年度自评、压力测试、重大变更管理、kill 功能、事前和实时风控。
-- 模型风险管理（如英国 PRA SS1/23；美国 SR 11-7，二手资料称 2026 年 4 月已被新指引取代，原文未核对）要求独立验证、持续监控、有效挑战。
-- **再训练包络**：事先书面定义哪些变化算常规再训练（同特征、同结构、同动作、同奖励、窗口滚动、超参数在预定范围内），走自动验证门槛 + 签批；包络外的变化按实质性更新处理。
-- **冠军-挑战者**：新版本先影子运行，再小流量对照，再替换。
-- **监控**：状态分布、动作分布、成本、信号校准度的漂移；超阈值自动回退到规则策略。
-- **硬约束和模型分离**：进度带、价格保护、频率限制、kill switch 都在模型之外。
+## 12. 模型风险和上线
 
-## 6. 算力
+- 算法交易监管（如欧盟 MiFID II RTS 6）一般要求：上线前测试、测试环境与生产隔离、受控部署、重大变更管理、kill 功能、事前和实时风控。模型风险管理（如 SR 11-7、PRA SS1/23）要求独立验证和持续监控。
+- **再训练包络**：事先写清楚哪些变化算常规再训练（同特征、同动作、同奖励、同结构、窗口滚动、超参数在预定范围），走自动验证门槛；包络外的变化按实质性更新处理。
+- **冠军-挑战者**：新版本先影子运行，再小流量对照，再替换；保留一键回退到规则策略。
+- **监控**：状态分布、动作分布、成本、信号校准度的漂移；超阈值自动回退。
 
-| 组件 | 规模 | CPU（量级估计，未实测） |
+## 13. 算力（i9 CPU，没有 GPU）
+
+| 组件 | 规模 | i9 上的量级（估计，未实测） |
 |---|---|---|
-| 监督模块（GBDT / 逻辑回归） | 10^6–10^7 样本 | 分钟级 |
-| Bandit 离线学习 + OPE | 10^5–10^7 决策 | 分钟级 |
-| 离线 RL（2 层 MLP，256 单元） | 10^6 转移 | 小时级 |
-| DQN / PPO 在快速模拟器上 | 10^6–10^7 步 | 够用，瓶颈在模拟器速度，要多核并行 |
-| DQN / PPO 在 ABIDES 上 | 每个 episode 模拟全天多主体 | 慢，只适合评估和小实验 |
-| JAX-LOB、生成式模型 | — | 需要 GPU，不可行 |
-
-## 7. 风险和对策
-
-| 风险 | 表现 | 对策 |
-|---|---|---|
-| 模拟器偏差 | 被动成交过于乐观、冲击被低估 | 保守队列模型并报告区间；自身订单回放；排名一致性；参数随机化 |
-| 覆盖度不足 | 日志由确定性规则产生，评估不了新动作 | 尽早加安全集内随机化，记录倾向得分 |
-| 信号漂移 | 信号失效时 RL 过度依赖 | 输入信号的近期校准度；信号失效时回退规则 |
-| 奖励漏洞 | 挂深档等便宜价，或频繁撤挂 | 清扫成本进奖励；撤单频率进动作屏蔽 |
-| 统计功效不足 | 测不出 1 bp 改进 | 子单级指标、方差缩减、聚类稳健推断 |
-
-开源仓库见 [`repos.md`](repos.md)。
+| Bandit 奖励模型 + DR 评估 | $10^6$–$10^7$ 次决策 | 几分钟 |
+| 约束 FQI（LightGBM，$N$ 次迭代） | $10^6$ 条转移，$N \le 60$ | 十几分钟到 1 小时 |
+| IQL / CQL（2 层 MLP） | $10^6$ 条转移，$10^5$–$10^6$ 步 | 1–3 小时 |
+| PPO（小 MLP，快速模拟器，8–16 进程） | $10^7$ 步 | 几小时，瓶颈在模拟器 |
+| ABIDES（多主体，Python） | 每个 episode 模拟全天 | 很慢，只适合评估 |
+| JAX-LOB、生成式 LOB 模型 | — | 需要 GPU，不考虑 |
 
 ## 参考文献
 
 **执行 RL**
 
-- Nevmyvaka, Feng, Kearns (2006). Reinforcement learning for optimized trade execution. *ICML 2006*, 673–680. https://www.cis.upenn.edu/~mkearns/papers/rlexec.pdf
-- Hendricks, Wilcox (2014). A reinforcement learning extension to the Almgren-Chriss model for optimal trade execution. *IEEE CIFEr*. https://arxiv.org/abs/1403.2229
-- Bacoyannis, Glukhov, Jin, Kochems, Song (2018). Idiosyncrasies and challenges of data driven learning in electronic trading. *NeurIPS 2018 Workshop*. https://arxiv.org/abs/1811.09549 （立场文章：非平稳、低信噪比、模拟器、奖励设计）
+- Nevmyvaka, Feng, Kearns (2006). Reinforcement learning for optimized trade execution. *ICML 2006*.
 - Ning, Lin, Jaimungal (2021). Double deep Q-learning for optimal execution. *Applied Mathematical Finance* 28(4):361–380. https://arxiv.org/abs/1812.06600
-- Lin, Beling (2020). An end-to-end optimal trade execution framework based on proximal policy optimization. *IJCAI 2020*. https://www.ijcai.org/Proceedings/2020/627
+- Lin, Beling (2020). An end-to-end optimal trade execution framework based on proximal policy optimization. *IJCAI 2020*.
 - Karpe, Fang, Ma, Wang (2020). Multi-agent reinforcement learning in a realistic limit order book market simulation. *ICAIF 2020*. https://arxiv.org/abs/2006.05574
 - Vyetrenko, Xu (2019). Risk-sensitive compact decision trees for autonomous execution in presence of simulated market response. https://arxiv.org/abs/1906.02312
 - Fang 等 (2021). Universal trading for order execution with oracle policy distillation. *AAAI 2021*. https://arxiv.org/abs/2103.10860
 - Zhang 等 (2023). Towards generalizable reinforcement learning for trade execution. *IJCAI 2023*. https://arxiv.org/abs/2307.11685
-- Pan 等 (2022). Learn continuously, act discretely: hybrid action-space RL for optimal execution. https://arxiv.org/abs/2207.11152
 - Fabre, Ragel (2023). Interpretable ML for high-frequency execution. https://arxiv.org/abs/2307.04863
-- Hafsi, Vittori (2024). Optimal execution with reinforcement learning. https://arxiv.org/abs/2411.06389
 - Cheridito, Weiss (2025). Reinforcement learning for trade execution with market and limit orders. https://arxiv.org/abs/2507.06345
 
-**解析基线**
+**RL 方法**
 
-- Almgren, Chriss (2001). Optimal execution of portfolio transactions. *Journal of Risk*. DOI 10.21314/JOR.2001.041
+- Ng, Harada, Russell (1999). Policy invariance under reward transformations: theory and application to reward shaping. *ICML 1999*.
+- Dudík, Langford, Li (2011). Doubly robust policy evaluation and learning. *ICML 2011*.
+- Athey, Wager (2021). Policy learning with observational data. *Econometrica* 89(1):133–161.
+- Li, Chu, Langford, Schapire (2010). A contextual-bandit approach to personalized news article recommendation (LinUCB). *WWW 2010*.
+- Agrawal, Goyal (2013). Thompson sampling for contextual bandits with linear payoffs. *ICML 2013*.
+- Ernst, Geurts, Wehenkel (2005). Tree-based batch mode reinforcement learning (FQI). *JMLR* 6:503–556.
+- Le, Voloshin, Yue (2019). Batch policy learning under constraints (FQE). *ICML 2019*.
+- Fujimoto, Meger, Precup (2019). Off-policy deep reinforcement learning without exploration (BCQ). *ICML 2019*.
+- Kumar, Zhou, Tucker, Levine (2020). Conservative Q-learning for offline reinforcement learning. *NeurIPS 2020*.
+- Kostrikov, Nair, Levine (2022). Offline reinforcement learning with implicit Q-learning. *ICLR 2022*.
+- Schulman 等 (2017). Proximal policy optimization algorithms. https://arxiv.org/abs/1707.06347
+- Schulman 等 (2016). High-dimensional continuous control using generalized advantage estimation. *ICLR 2016*.
+- Altman (1999). *Constrained Markov Decision Processes*. Chapman & Hall.
+
+**解析基线和模拟器**
+
+- Almgren, Chriss (2001). Optimal execution of portfolio transactions. *Journal of Risk* 3(2):5–39.
 - Cartea, Jaimungal (2015). Optimal execution with limit and market orders. *Quantitative Finance* 15(8):1279–1291.
 - Cartea, Jaimungal (2016). Incorporating order-flow into optimal execution. *Mathematics and Financial Economics* 10:339–364.
-- Lehalle, Neuman (2019). Incorporating signals into optimal trading. *Finance and Stochastics* 23(2):275–311. https://arxiv.org/abs/1704.00847
-- Cartea, Jaimungal, Penalva (2015). *Algorithmic and High-Frequency Trading*. Cambridge University Press.
-
-**模拟器**
-
-- Huang, Lehalle, Rosenbaum (2015). Simulating and analyzing order book data: the queue-reactive model. *JASA* 110:107–122. https://arxiv.org/abs/1312.0563
+- Lehalle, Neuman (2019). Incorporating signals into optimal trading. *Finance and Stochastics* 23(2):275–311.
+- Bouchaud, Gefen, Potters, Wyart (2004). Fluctuations and response in financial markets. *Quantitative Finance* 4(2):176–190.
+- Huang, Lehalle, Rosenbaum (2015). Simulating and analyzing order book data: the queue-reactive model. *JASA* 110:107–122.
 - Noble, Rosenbaum, Souilmi (2026). Bridging the reality gap in limit order book simulation. https://arxiv.org/abs/2603.24137
-- Bacry, Mastromatteo, Muzy (2015). Hawkes processes in finance. https://arxiv.org/abs/1502.04592
-- Morariu-Patrichi, Pakkanen (2022). State-dependent Hawkes processes and their application to limit order book modelling. *Quantitative Finance* 22(3):563–583. https://arxiv.org/abs/1809.08060
-- Byrd, Hybinette, Balch (2019). ABIDES. https://arxiv.org/abs/1904.12066
-- Amrouni 等 (2021). ABIDES-Gym. *ICAIF 2021*. https://arxiv.org/abs/2110.14771
-- Jerome, Sánchez-Betancourt, Savani, Herdegen (2023). Model-based gym environments for limit order book trading. *ICAIF 2023*. https://arxiv.org/abs/2209.07823
-- Frey 等 (2023). JAX-LOB. *ICAIF 2023*. https://arxiv.org/abs/2308.13289
-- Nagy 等 (2023). Generative AI for end-to-end limit order book modelling (LOBS5). *ICAIF 2023*. https://arxiv.org/abs/2309.00638
-- Nagy 等 (2025). LOB-Bench. *ICML 2025*. https://arxiv.org/abs/2502.09172
-- Berti, Prenkaj, Velardi (2025). TRADES. *ECAI 2025*. https://arxiv.org/abs/2502.07071
-- Li 等 (2025). MarS: a financial market simulation engine powered by generative foundation model. *ICLR 2025*. https://arxiv.org/abs/2409.07486
-- Jain, Firoozye, Kochems, Treleaven (2024). Limit order book simulations: a review. https://arxiv.org/abs/2402.17359
-
-**离线 RL**
-
-- Kumar, Zhou, Tucker, Levine (2020). Conservative Q-learning for offline RL. *NeurIPS 2020*.
-- Fujimoto, Meger, Precup (2019). Off-policy deep RL without exploration (BCQ). *ICML 2019*.
-- Kostrikov, Nair, Levine. Offline RL with implicit Q-learning (IQL). （会议年份未核实）
-
-未核实：Vyetrenko 等 *Get Real* 的会议信息；MDPI *FinTech* 2(3):23（2023）一篇执行 RL 论文的作者；SR 11-7 被取代一事的监管原文。
+- Jerome, Sánchez-Betancourt, Savani, Herdegen (2023). Model-based gym environments for limit order book trading (mbt_gym). *ICAIF 2023*. https://arxiv.org/abs/2209.07823
+- Deng, Xu, Kohavi, Walker (2013). Improving the sensitivity of online controlled experiments by utilizing pre-experiment data (CUPED). *WSDM 2013*.

@@ -1,381 +1,522 @@
 # 变量与预测目标
 
-2026-10 调研整理。tick 级盘口信号有哪些输入变量、背后的经济学含义、预测目标怎么选。总览见 [`modeling-guide.md`](modeling-guide.md)。
+2026-10 调研整理。tick 级盘口信号的输入变量（定义、直觉、经济含义）、背后的经济学模型、跨股票标准化，以及预测目标怎么选。总览见 [`modeling-guide.md`](modeling-guide.md)。
 
 ## 结论
 
-1. **最强的短期输入是订单流（OFI 类）和盘口不平衡（queue imbalance、microprice）。** 约一分钟的窗口内，OFI 和同期中间价变化近似线性，斜率和深度成反比（Cont、Kukanov、Stoikov 2014）。多档 OFI 用第一主成分合成 integrated OFI 后，同期解释力的样本外 R² 从约 65% 升到约 84%（Cont、Cucuringu、Zhang 2023）。
+1. **最强的短期输入是订单流（OFI 类）和盘口不平衡（queue imbalance、microprice）。** 约一分钟的窗口内，OFI 和同期中间价变化近似线性，斜率和深度成反比（Cont、Kukanov、Stoikov 2014）。多档 OFI 用第一主成分合成 integrated OFI 后，同期解释力的样本外 $R^2$ 从约 65% 升到约 84%（Cont、Cucuringu、Zhang 2023）。
 2. **tick 大小是第一位的分组变量。** 大 tick 股票（价差几乎总是 1 档、队列长）的中间价变动本质上是「哪一侧队列先被打穿」，不平衡类变量很强；小 tick 股票盘口稀疏，可预测性弱得多。
 3. **「下一笔成交价涨跌」这个标签被 bid-ask bounce 严重污染。** 模型学到的多半是「下一笔是主动买还是主动卖」，不是价值变化。标签要用中间价或 microprice。
 4. **FI-2010 那种平滑标签不适合执行。** 阈值是为了平衡类别选的，没有经济含义；对 horizon 很敏感；平均值也不可交易。
-5. **三重障碍是好的起点，升级成「首达时间 + 竞争风险」更好。** 一个模型给出任意 τ 下先涨 / 先跌的概率。
+5. **三重障碍是好的起点，升级成「首达时间 + 竞争风险」更好。** 一个模型给出一组 τ 下先涨 / 先跌的概率。
 6. **原始的 OFI 回归是「同期」关系，不是预测。** 拿来预测时信号弱得多，有效 horizon 只有约 2 次平均价格变动（Kolm 等 2023）。
 
 ## 1. 记号
 
-```
-k = 1..K          档位，k = 1 为最优档
-bid_k, ask_k      第 k 档买价 / 卖价
-qb_k, qa_k        第 k 档买量 / 卖量
-n                 事件序号（每次盘口更新或成交是一个事件）
-h                 回看窗口长度（时钟时间或事件数）
-δ                 最小价位变动（tick size）
-mid  = (bid_1 + ask_1) / 2
-S    = ask_1 − bid_1               价差
-S_tk = S / δ                       价差，以 tick 计
-sign_i ∈ {+1, −1}                  第 i 笔成交的主动方向（+1 = 主动买）
-v_i                                第 i 笔成交量
-```
+| 记号 | 含义 |
+|---|---|
+| $k = 1, \dots, K$ | 档位，$k = 1$ 为最优档 |
+| $P^b_k, P^a_k$ | 第 $k$ 档买价、卖价 |
+| $q^b_k, q^a_k$ | 第 $k$ 档买量、卖量 |
+| $n$ | 事件序号（每次盘口更新或成交是一个事件） |
+| $h$ | 回看窗口（时钟时间或事件数） |
+| $\delta$ | 最小价位变动（tick） |
+| $m = (P^b_1 + P^a_1)/2$ | 中间价 |
+| $S = P^a_1 - P^b_1$，$S_{\text{tk}} = S / \delta$ | 价差，以价格计 / 以 tick 计 |
+| $\varepsilon_i \in \{+1, -1\}$，$v_i$ | 第 $i$ 笔成交的主动方向（$+1$ = 主动买）和成交量 |
 
 ## 2. 变量分四类
 
-| 类型 | 含义 | 典型变量 | 计算 | 注意 |
-|---|---|---|---|---|
-| **状态量** | 某一时刻盘口的形状 | 队列不平衡、多档不平衡、microprice、价差、深度 | 在 t 时刻的快照上直接算 | 附带「距上次更新的时间」 |
-| **流量** | 一个窗口内发生了什么 | OFI、多档 OFI、成交不平衡、撤单率、队列消耗速度、事件强度、波动、间隔 | 在 (t − h, t] 内累积 | 多个窗口（多尺度）；只用 t 之前的数据 |
-| **慢变属性** | 股票级、日级的结构参数 | tick 相对价格、平均价差、价差 = 1 档的时间占比、平均队列 / 平均成交、Amihud | 过去 N 日滚动估计 | 用于跨股票标准化、分组、交互 |
-| **跨资产** | 其他资产的流量和状态 | 指数期货、ETF、板块的滞后 OFI 和收益 | 和流量一样，但**必须滞后** | 只在极短 horizon 有增量 |
+| 类型 | 含义 | 典型变量 | 注意 |
+|---|---|---|---|
+| **状态量** | 某一时刻盘口的形状 | 队列不平衡、多档不平衡、microprice、价差、深度 | 附带「距上次更新的时间」 |
+| **流量** | 一个窗口内发生了什么 | OFI、多档 OFI、成交不平衡、撤单率、队列消耗速度、事件强度、波动、间隔 | 多个窗口（多尺度）；只用 $t$ 之前的数据 |
+| **慢变属性** | 股票级、日级的结构参数 | tick 相对价格、平均价差、价差 = 1 档的时间占比、平均队列 / 平均成交、Amihud | 用于跨股票标准化、分组、交互 |
+| **跨资产** | 其他资产的流量和状态 | 指数期货、ETF、板块的滞后 OFI 和收益 | **必须滞后**；只在极短 horizon 有增量 |
 
 ## 3. 盘口状态量
 
-### 3.1 最优档队列不平衡（OBI / queue imbalance）
+### 3.1 最优档队列不平衡（OBI）
 
-```
-QI_1 = (qb_1 − qa_1) / (qb_1 + qa_1)        取值 [−1, 1]
-或   I = qb_1 / (qb_1 + qa_1)                取值 [0, 1]
-```
+$$
+\mathrm{OBI}_1 = \frac{q^b_1 - q^a_1}{q^b_1 + q^a_1} \in [-1, 1],
+\qquad
+I = \frac{q^b_1}{q^b_1 + q^a_1} = \frac{1 + \mathrm{OBI}_1}{2} \in [0, 1]
+$$
 
 - **直觉**：买一厚、卖一薄，卖一更容易先被吃光或撤光，中间价更可能上移。
-- **经济含义**：大 tick 股票的价格变化由「队列耗尽」驱动，不平衡衡量两侧队列的「耗尽竞赛」，也部分反映流动性提供者的意愿。
-- **实证**：逻辑回归 + QI 预测下一次中间价变动方向，大 tick 股票上增益很大、小 tick 上中等（Gould 和 Bonart 2016）。量不平衡能预测下一笔市价单的方向，纳入挂单策略能降低逆向选择（Cartea、Donnelly、Jaimungal 2018）。延迟会侵蚀不平衡信息的价值（Lehalle 和 Mounjid）。
-- **用法**：做非线性变换（分箱、样条或 atanh），**和价差交互**。价差大于 1 档时 QI 的含义变了：价差内可能出现新挂单，中间价可以移动半个 tick。
+- **经济含义**：大 tick 股票的价格变化由「队列耗尽」驱动，不平衡衡量两侧队列的「耗尽竞赛」。在排队模型里，两侧队列独立地以随机游走被消耗，「卖一先耗尽」的概率是 $I$ 的增函数（Cont、de Larrard 2013 给出了解析式）。
+- **实证**：逻辑回归 $P(\text{下一次中间价上移}) = \sigma(\beta_0 + \beta_1 I)$ 在大 tick 股票上增益很大、在小 tick 股票上中等（Gould 和 Bonart 2016）。量不平衡能预测下一笔市价单的方向，纳入挂单策略能降低逆向选择（Cartea、Donnelly、Jaimungal 2018）。
+- **用法**：做非线性变换（分箱、样条或 $\operatorname{atanh}(\mathrm{OBI})$），**和价差交互**。价差大于 1 档时，价差内可能出现新挂单，中间价可以移动半个 tick，OBI 的含义变了。
 
 ### 3.2 多档不平衡
 
-```
 按档位加权：
-QI_K = Σ_{k=1..K} w_k (qb_k − qa_k) / Σ_{k=1..K} w_k (qb_k + qa_k)      w_k = exp(−λ(k−1)) 或 1/k
 
-按价格距离加权（小 tick 股票推荐）：
-D_bid(d) = [mid − d·δ, mid) 区间内的买量
-D_ask(d) = (mid, mid + d·δ] 区间内的卖量
-QI(d)    = (D_bid(d) − D_ask(d)) / (D_bid(d) + D_ask(d))                d = 1, 2, 5, 10
-```
+$$
+\mathrm{OBI}_K = \frac{\sum_{k=1}^{K} w_k\,(q^b_k - q^a_k)}{\sum_{k=1}^{K} w_k\,(q^b_k + q^a_k)},
+\qquad
+w_k = e^{-\lambda (k-1)} \ \text{或}\ w_k = 1/k
+$$
 
-深档决定「打穿一档之后还会走多远」，也反映深处的供需意图。小 tick 股票档位之间可能有空价位，「第 k 档」不等于「距离 k tick」，按价格距离分桶更稳。
+按价格距离加权（小 tick 股票推荐，因为档位之间可能有空价位）：
+
+$$
+D^b(j) = \sum_{k:\ P^b_k \ge m - j\delta} q^b_k,
+\qquad
+D^a(j) = \sum_{k:\ P^a_k \le m + j\delta} q^a_k,
+\qquad
+\mathrm{OBI}(j) = \frac{D^b(j) - D^a(j)}{D^b(j) + D^a(j)},\quad j \in \{1, 2, 5, 10\}
+$$
+
+深档决定「打穿一档之后还会走多远」，也反映深处的供需意图。
 
 ### 3.3 Microprice（Stoikov 2018）
 
-```
-简单版（加权中间价）：
-  Mw = I × ask_1 + (1 − I) × bid_1
-  (Mw − mid) / δ = (I − 0.5) × S_tk
-  问题：不是鞅，噪声大；卖一只剩 1 股被撤后，Mw 反而下移
+**加权中间价**是最简单的版本：
 
-Stoikov 的 microprice：
-  P_micro = lim E[mid(τ_i) | 当前状态]，τ_i 是第 i 次中间价变动的时刻
-  P_micro = mid + Σ_{i≥1} g_i(I, S)              # 实际截断到 i ≈ 6
-  估计：把 I 分成 n 箱、S 分成 m 个状态，状态 X = (I, S)，估计
-        Q  = 中间价不变时的状态转移矩阵
-        R1 = 从各状态出发、中间价变动 ΔM 的概率
-        R2 = 中间价变动后的新状态的转移矩阵
-        K  = 中间价变动的取值向量（如 ±0.5δ、±δ）
-        g_1 = (Id − Q)^(−1) R1 K                   # Id 为单位矩阵
-        B   = (Id − Q)^(−1) R2，g_{i+1} = B g_i
-  对称化：估计前把样本按 (I, S, ΔM) → (1 − I, S, −ΔM) 镜像扩充，
-          使 g(I, S) = −g(1 − I, S)，保证 B^i g_1 → 0、级数收敛
-  特征：G* = (P_micro − mid) / δ
-```
+$$
+M^w = I\,P^a_1 + (1 - I)\,P^b_1,
+\qquad
+\frac{M^w - m}{\delta} = \Big(I - \frac{1}{2}\Big) S_{\text{tk}}
+$$
 
-- microprice 是「在当前盘口状态下，中间价最终会去哪」的条件期望，按构造是鞅，是更合理的公允价估计。
-- 它把不平衡和价差映射成「以价格计的预期漂移」，**可以直接和吃单成本（半个价差 + 费用）比较**。
-- G\* 本身就是一个强特征，也是一个基线模型。有研究在部分市场没复现出它的优势，要在自己的数据上验证。
+它不是鞅，噪声大：卖一只剩 1 股被撤后，新的卖一更深、量更大，$M^w$ 反而下移。
+
+**Stoikov 的 microprice** 定义为未来中间价的极限条件期望：
+
+$$
+P^{\text{micro}}_t = \lim_{i \to \infty} \mathbb{E}\big[m_{\tau_i} \mid \mathcal{F}_t\big] = m_t + \sum_{i \ge 1} g_i(I_t, S_t)
+$$
+
+$\tau_i$ 是第 $i$ 次中间价变动的时刻。假设动力学只依赖状态 $X = (I, S)$、和价格水平无关，把 $I$ 分成 $n$ 箱、$S$ 取 $m$ 个值，估计三个矩阵：
+
+- $Q$：中间价**不变**时的状态转移矩阵；
+- $R_1$：从各状态出发、中间价变动 $\Delta M$ 的概率；$K$ 是 $\Delta M$ 的取值向量（如 $\pm\delta/2, \pm\delta$）；
+- $R_2$：中间价**变动后**新状态的转移矩阵。
+
+$$
+g_1 = (\mathbf{I} - Q)^{-1} R_1 K,
+\qquad
+B = (\mathbf{I} - Q)^{-1} R_2,
+\qquad
+g_{i+1} = B\,g_i
+$$
+
+（$\mathbf{I}$ 是单位矩阵。）估计前把样本按 $(I, S, \Delta M) \mapsto (1 - I, S, -\Delta M)$ 镜像扩充，使 $g(I, S) = -g(1 - I, S)$，保证 $B^i g_1 \to 0$、级数收敛；实际截断到 $i \approx 6$。特征用 $G^* = (P^{\text{micro}} - m)/\delta$。
+
+- 它把不平衡和价差映射成「以价格计的预期漂移」，**可以直接和吃单成本 $S/2 + f_t$ 比较**。
+- $G^*$ 本身是强特征，也是一个基线模型；有研究在部分市场没复现出它的优势，要在自己的数据上验证。
 
 ### 3.4 价差
 
-```
-S_tk；1{S_tk = 1}；S_tk 相对日内同时段均值；窗口内 S_tk = 1 的时间占比
-```
-
-既是特征，也是**条件变量**：模型按 `S_tk = 1` 和 `S_tk > 1` 分段，或做交互。在 Glosten-Milgrom 里价差补偿逆向选择；大 tick 股票的价差被「钉」在 1 档，真实的隐含价差小于 1 档（Dayri 和 Rosenbaum 2015）。
+$S_{\text{tk}}$、$\mathbb{1}[S_{\text{tk}} = 1]$、$S_{\text{tk}}$ 相对日内同时段均值、窗口内 $S_{\text{tk}} = 1$ 的时间占比。既是特征，也是**条件变量**：模型按 $S_{\text{tk}} = 1$ 和 $S_{\text{tk}} > 1$ 分段或交互。大 tick 股票的价差被「钉」在 1 档，真实的隐含价差小于 1 档（Dayri 和 Rosenbaum 2015）。
 
 ### 3.5 深度
 
-```
-Depth_k = Σ_{j=1..k} (qb_j + qa_j)
-标准化：Depth_k / 同档位、同时段过去 N 日的平均深度
-        qb_1 / 中位数市价单规模          # 要几笔典型市价单才能打穿
-```
+$$
+\mathrm{Depth}_k = \sum_{j=1}^{k} (q^b_j + q^a_j),
+\qquad
+\widetilde{\mathrm{Depth}}_k = \frac{\mathrm{Depth}_k}{\overline{\mathrm{Depth}}_k^{\,\text{同档、同时段、过去 } N \text{ 日}}},
+\qquad
+\frac{q^b_1}{\operatorname{median}(v^{\text{MO}})}
+$$
 
-价格冲击系数约和深度成反比：深度越浅，同样的订单流引起的价格变化越大（Kyle λ 的微观对应）。
+最后一个是「要几笔典型市价单才能打穿」。价格冲击系数约和深度成反比（见 4.1 节）。
 
 ### 3.6 tick 相对价格（大 tick vs 小 tick）
 
-```
-tick_to_price = δ / mid                    （bp）
-tick_to_vol   = δ / σ                      σ 为某尺度上的价格波动
-P(S = 1)      = 价差等于 1 档的时间占比
-mean_S_tk     = 平均价差 / δ               （Briola 等按此分大 / 中 / 小 tick：≲ 1.5 / 中间 / ≳ 3）
-```
+$$
+\frac{\delta}{m}\ (\text{bp}),\qquad
+\frac{\delta}{\sigma},\qquad
+P(S_{\text{tk}} = 1),\qquad
+\overline{S}_{\text{tk}} = \frac{\overline{S}}{\delta}
+$$
 
-tick 越大，价格离散化越严重：价差被钉在 1 档，队列很长，价格变动稀少、多是 ±1 档。**这是最重要的跨股票条件变量**，用于分组建模、交互项和标签设计（障碍宽度）。
+Briola 等（2025）按 $\overline{S}_{\text{tk}}$ 分组：$\lesssim 1.5$ 为大 tick，$\gtrsim 3$ 为小 tick。tick 越大，价格离散化越严重：价差被钉在 1 档，队列很长，价格变动稀少、多是 $\pm 1$ 档。**这是最重要的跨股票条件变量**，用于分组建模、交互项和标签设计（障碍宽度）。
 
 ## 4. 订单流量
 
 ### 4.1 OFI（Cont、Kukanov、Stoikov 2014）
 
-```
-单个事件 n 的贡献（最优档）：
-e_n =  qb_1(n)   × 1{bid_1(n) >= bid_1(n−1)}
-     − qb_1(n−1) × 1{bid_1(n) <= bid_1(n−1)}
-     − qa_1(n)   × 1{ask_1(n) <= ask_1(n−1)}
-     + qa_1(n−1) × 1{ask_1(n) >= ask_1(n−1)}
+单个事件 $n$ 对最优档的贡献：
 
-窗口：OFI(t − h, t] = Σ_{n ∈ (t−h, t]} e_n
-```
+$$
+e_n = q^b_1(n)\,\mathbb{1}\big[P^b_1(n) \ge P^b_1(n-1)\big] - q^b_1(n-1)\,\mathbb{1}\big[P^b_1(n) \le P^b_1(n-1)\big]
+- q^a_1(n)\,\mathbb{1}\big[P^a_1(n) \le P^a_1(n-1)\big] + q^a_1(n-1)\,\mathbb{1}\big[P^a_1(n) \ge P^a_1(n-1)\big]
+$$
+
+窗口内求和：$\mathrm{OFI}(t-h, t] = \sum_{n \in (t-h, t]} e_n$。
 
 - **直觉**：买一增加（加挂、价格上移）是买压，买一减少（撤单、被吃）是卖压，卖一对称。OFI 把限价单、市价单、撤单统一成「最优档的净供需变化」。
-- **经济含义**：短窗口内价格变化主要由 OFI 驱动，关系线性，斜率约与深度成反比；基于成交量的价量关系噪声更大。
-- **注意**：原始实证是**同期**回归，不是预测。
+- **价格冲击关系**（同期）：
 
-### 4.2 多档 OFI、标准化 OFI 和 integrated OFI
+$$
+\Delta m_k = \beta\,\mathrm{OFI}_k + \epsilon_k,
+\qquad
+\beta \approx \frac{c}{\mathrm{AD}}
+$$
 
-```
-多档：OFI^m 用第 m 档的价格和量，按同样规则计算，m = 1..M
-      向量 MLOFI = (OFI^1, …, OFI^M)
+$\mathrm{AD}$ 是平均深度。斜率和深度成反比，这就是 Kyle $\lambda$（4.12 节）的微观对应。所以 $\mathrm{OFI}/\mathrm{AD}$ 跨股票可比。基于成交量的价量关系噪声更大。
 
-深度标准化（Cont、Cucuringu、Zhang 2023）：
-  Q^{M,h}(t) = 前 M 档在窗口内的平均深度
-  ofi^m(t)   = OFI^m(t − h, t] / Q^{M,h}(t)
+- **注意**：这是**同期**回归，不是预测。
 
-integrated OFI：
-  w_1     = 历史多档 ofi 向量的第一主成分载荷
-  ofi^I   = w_1' × ofi / ||w_1||_1
-```
+### 4.2 多档 OFI 和 integrated OFI
 
-- 每多加一档，同期拟合都改善（Xu、Gould、Howison 2019）。
-- 多档 OFI 高度相关，第一主成分解释 89% 以上的方差。同期 R²：最优档 OFI 样本外 64.6%，integrated OFI 83.8%。
-- **预测场景下，integrated OFI 没有显著好于最优档 OFI**。作者推测主成分丢了「档位距离」的信息。所以预测时可以把各档 OFI 分开输入，让模型自己学权重。
+第 $\ell$ 档的订单流（Xu、Gould、Howison 2019）：
+
+$$
+\mathrm{OF}^b_\ell(n) =
+\begin{cases}
+q^b_\ell(n) & P^b_\ell(n) > P^b_\ell(n-1) \\
+q^b_\ell(n) - q^b_\ell(n-1) & P^b_\ell(n) = P^b_\ell(n-1) \\
+-q^b_\ell(n-1) & P^b_\ell(n) < P^b_\ell(n-1)
+\end{cases}
+\qquad
+\mathrm{OF}^a_\ell(n) =
+\begin{cases}
+-q^a_\ell(n-1) & P^a_\ell(n) > P^a_\ell(n-1) \\
+q^a_\ell(n) - q^a_\ell(n-1) & P^a_\ell(n) = P^a_\ell(n-1) \\
+q^a_\ell(n) & P^a_\ell(n) < P^a_\ell(n-1)
+\end{cases}
+$$
+
+$$
+\mathrm{OFI}_\ell(t-h, t] = \sum_{n \in (t-h, t]} \big(\mathrm{OF}^b_\ell(n) - \mathrm{OF}^a_\ell(n)\big)
+$$
+
+（$\ell = 1$ 时和 4.1 节的 $e_n$ 一致。）
+
+深度标准化和主成分合成（Cont、Cucuringu、Zhang 2023）：
+
+$$
+\mathrm{ofi}_\ell = \frac{\mathrm{OFI}_\ell}{Q^{(M)}},
+\qquad
+Q^{(M)} = \frac{1}{M}\sum_{\ell=1}^{M} \frac{1}{2\,\Delta N}\sum_{n}\big(q^b_\ell(n) + q^a_\ell(n)\big),
+\qquad
+\mathrm{ofi}^{I} = \frac{w_1^\top \mathbf{ofi}}{\lVert w_1 \rVert_1}
+$$
+
+$w_1$ 是历史上多档 $\mathbf{ofi}$ 向量协方差矩阵的第一主成分。
+
+- 多档 OFI 高度相关，第一主成分解释 89% 以上的方差。同期 $R^2$（样本外）：最优档 64.6%，integrated OFI 83.8%。
+- **预测场景下，integrated OFI 没有显著好于最优档 OFI**。作者推测主成分丢了「档位距离」的信息。所以预测时把各档 $\mathrm{ofi}_\ell$ 分开输入，让模型自己学权重。
 - 小 tick 股票档位会重排，可以改用「距中间价的 tick 距离」定义档位。
 
 ### 4.3 跨资产 OFI
 
-```
-r_i(t, t+f] = α_i + Σ_j Σ_k β_{i,j,k} × ofi_j^{(kh)}(t) + ε        LASSO 估计（Cont、Cucuringu、Zhang 2023）
+$$
+r_i(t, t+f] = \alpha_i + \sum_{j=1}^{N}\sum_{k \in \mathcal{L}} \beta_{ijk}\,\mathrm{ofi}_j^{(k)}(t) + \epsilon_i
+\qquad \text{（LASSO 估计）}
+$$
 
-实用简化：
-  市场 / 板块因子 OFI：指数期货、ETF 或板块成分的 OFI 加权和或第一主成分，取滞后
-  特质 OFI：本股 OFI 对因子 OFI 回归后的残差
-```
+实用简化：市场 / 板块的因子 OFI $F_t = \sum_j \omega_j\,\mathrm{ofi}_j(t)$（加权和或第一主成分），取滞后；本股的特质 OFI 是对因子回归的残差 $\mathrm{ofi}_i - \hat b_i F$。
 
 - 订单流有共同因子，解释收益共性的约三分之二（Hasbrouck 和 Seppi 2001）。
-- **同期**跨资产项在用 integrated OFI 后没有增量；**滞后**的跨资产 OFI 能改善约 1 分钟的预测，但衰减很快（Cont、Cucuringu、Zhang 2023；Chinco、Clark-Joseph、Ye 2019）。
-- 用法：只加少数稳定、有经济含义的领先变量（指数期货、ETF、板块），严格滞后，在 ≤ 1 分钟的 horizon 上验证。
+- **同期**跨资产项在用 integrated OFI 后没有增量；**滞后**的跨资产 OFI 能改善约 1 分钟的预测，衰减很快（Cont、Cucuringu、Zhang 2023；Chinco、Clark-Joseph、Ye 2019）。
 
 ### 4.4 成交不平衡
 
-```
-TI(t − h, t]  = Σ_i sign_i × v_i
-TI_norm       = (V_buy − V_sell) / (V_buy + V_sell)
-笔数不平衡     = (N_buy − N_sell) / (N_buy + N_sell)
-凹变换         = Σ_i sign_i × sqrt(v_i)               # 对应冲击的凹性
-「意外」部分   = sign_i − E[sign_i | 过去的符号]        # 去掉长记忆中可预测的部分
-```
+$$
+\mathrm{TI}(t-h, t] = \sum_i \varepsilon_i v_i,
+\qquad
+\mathrm{TI}^{\text{norm}} = \frac{V^{\text{buy}} - V^{\text{sell}}}{V^{\text{buy}} + V^{\text{sell}}},
+\qquad
+\mathrm{TI}^{\sqrt{}} = \sum_i \varepsilon_i \sqrt{v_i}
+$$
 
-在 Kyle 模型里净订单流携带私人信息。但成交符号有长记忆，而价格接近鞅：可预测的那部分已经被流动性的反向调整抵消。**真正有信息的是「意外」的订单流。**
+$$
+\text{意外部分：}\quad \tilde\varepsilon_i = \varepsilon_i - \mathbb{E}\big[\varepsilon_i \mid \varepsilon_{i-1}, \varepsilon_{i-2}, \dots\big]
+$$
+
+成交符号有长记忆（4.12 节），可预测的那部分已经被流动性的反向调整抵消，**真正携带信息的是意外部分** $\tilde\varepsilon$。条件期望可以用符号序列的 AR 模型估计。
 
 ### 4.5 成交方向怎么判断
 
-| 方法 | 做法 | 评价 |
+| 方法 | 规则 | 评价 |
 |---|---|---|
 | 交易所主动方标志 | 直接用 | 有就用 |
-| Lee-Ready（1991） | 成交价 > 中间价算买，< 算卖；等于中间价时用 tick test。现代逐笔数据用「成交前最后一个报价」 | 逐笔数据优先 |
-| Tick rule | 只看成交价相对前一个不同成交价的涨跌 | 和 Lee-Ready 准确率相近 |
-| BVC（Easley 等） | 按 bar 切分，`V_buy = V × Z(ΔP / σ_ΔP)` | 只适合缺逐笔方向、bar 较粗的场景；**秒级以下基本不适用** |
+| Lee-Ready（1991） | $p_i > m^-$ 为买，$p_i < m^-$ 为卖（$m^-$ 是成交前最后一个报价的中间价）；$p_i = m^-$ 时用 tick test | 逐笔数据优先 |
+| Tick rule | $p_i$ 高于前一个不同的成交价为买，低于为卖 | 和 Lee-Ready 准确率相近 |
+| BVC | 按 bar 切分，$V^{\text{buy}}_\tau = V_\tau\,\Phi\big(\Delta P_\tau / \sigma_{\Delta P}\big)$ | 只适合缺逐笔方向、bar 较粗的场景；**秒级以下基本不适用** |
 
 ### 4.6 队列消耗速度
 
-```
-depl_bid = (最优买档被成交的量 + 被撤的量) / h
-add_bid  = 最优买档新增挂单量 / h
-T_bid    = qb_1 / max(depl_bid − add_bid, ε)       # 预计耗尽时间
-特征：log(T_bid / T_ask)，或 1{T_ask < T_bid}
-```
+$$
+\text{depl}^b = \frac{\text{最优买档被成交的量} + \text{被撤的量}}{h},
+\qquad
+\text{add}^b = \frac{\text{最优买档新增挂单量}}{h},
+\qquad
+T^b = \frac{q^b_1}{\max(\text{depl}^b - \text{add}^b,\ \epsilon)}
+$$
 
-大 tick 股票的中间价变动 = 某侧队列被耗尽。**哪侧跑得快比哪侧现在短更有信息量。** 理论依据是排队模型：queue-reactive 模型里事件到达强度只依赖当前队列状态（Huang、Lehalle、Rosenbaum 2015）；Cont、Stoikov、Talreja（2010）和 Cont、de Larrard（2013）给出了「给定盘口时中间价上涨的概率」的解析式。这些模型假设事件间隔独立指数分布，和实证不符，当特征的启发有用，当精确概率要谨慎。
+特征 $\log(T^b / T^a)$ 或 $\mathbb{1}[T^a < T^b]$。大 tick 股票的中间价变动 = 某侧队列被耗尽，**哪侧跑得快比哪侧现在短更有信息量**。理论依据：queue-reactive 模型里各类事件的到达强度只依赖当前队列状态（Huang、Lehalle、Rosenbaum 2015）；Cont、Stoikov、Talreja（2010）和 Cont、de Larrard（2013）给出了「给定盘口时中间价上涨的概率」的解析式。这些模型假设事件间隔服从独立指数分布，和实证不符，当特征的启发有用，当精确概率要谨慎。
 
 ### 4.7 撤单率
 
-```
-cancel_rate_bid = 最优（或前 k）买档撤单量 / 平均队列量
-cancel_to_add   = 撤单量 / 新增挂单量
-撤单不平衡       = (cancel_ask − cancel_bid) / (cancel_ask + cancel_bid)
-```
+$$
+\text{cancel\_rate}^b = \frac{\text{最优（或前 } k\text{）买档撤单量}}{\overline{q^b}},
+\qquad
+\frac{\text{撤单量}}{\text{新增挂单量}},
+\qquad
+\frac{C^a - C^b}{C^a + C^b}
+$$
 
-一侧集中撤单，说明那一侧的流动性提供者觉得被逆向选择了：买方撤单预示下跌。OFI 已经隐含了撤单，单独拆出来可以区分「被吃掉」和「撤走」的不同含义。
+一侧集中撤单，说明那一侧的流动性提供者觉得被逆向选择了：买方撤单预示下跌。OFI 已经隐含了撤单，单独拆出来可以区分「被吃掉」和「撤走」。
 
 ### 4.8 事件强度（Hawkes）
 
-```
-λ_e(t) = μ_e + Σ_{e'} Σ_{t_i^{e'} < t} φ_{e,e'}(t − t_i^{e'})         φ(Δ) = α × exp(−β Δ)
+多元 Hawkes 过程，指数核：
 
-廉价近似：对每类事件 e（主动买、主动卖、买一加挂、卖一加挂、买一撤单、卖一撤单、中间价上、中间价下）
-          维护指数衰减计数 C_e(t; β) = Σ_{t_i < t} exp(−β (t − t_i))，取多个半衰期
-特征：C_buyMO / C_sellMO；C_e 相对日内同时段均值
-```
+$$
+\lambda_e(t) = \mu_e + \sum_{e'} \sum_{t^{e'}_i < t} \alpha_{e e'}\,e^{-\beta_{e e'}(t - t^{e'}_i)}
+$$
 
-事件会自激（市价单引发市价单）和互激（撤单引发市价单），强度上升意味着信息可能正在到达。直接拟合 Hawkes 成本高、容易误设；**衰减计数是很好的替代，天然多尺度**。
+直接拟合成本高、容易误设。**廉价近似**：对每类事件 $e$（主动买、主动卖、买一加挂、卖一加挂、买一撤单、卖一撤单、中间价上、中间价下）维护指数衰减计数，取几个半衰期：
+
+$$
+C_e(t; \beta) = \sum_{t_i^e < t} e^{-\beta (t - t_i^e)},
+\qquad
+C_e(t_{j}) = e^{-\beta (t_j - t_{j-1})}\,C_e(t_{j-1}) + \mathbb{1}[\text{事件 } j \text{ 属于 } e]
+$$
+
+递推形式是 $O(1)$ 增量更新。特征：$C_{\text{buyMO}}/C_{\text{sellMO}}$，$C_e$ 相对日内同时段均值。
 
 ### 4.9 波动
 
-```
-RV(t − h, t] = Σ (Δ log mid)²
-N_mid        = 窗口内中间价变动次数         # 大 tick 股票的波动代理
-```
+$$
+\mathrm{RV}(t-h, t] = \sum_{n} (\Delta \log m_n)^2,
+\qquad
+N^{\text{mid}}(t-h, t] = \#\{\text{中间价变动}\}
+$$
 
-短期波动决定「τ 内能走几档」，是幅度模型和障碍触达概率的核心输入，也用于标准化。**用成交价算会被 bid-ask bounce 抬高**，要用中间价或 microprice。
+$N^{\text{mid}}$ 是大 tick 股票的波动代理。短期波动决定「τ 内能走几档」，是幅度模型和障碍触达概率的核心输入。**用成交价算会被 bid-ask bounce 抬高**（Roll 1984），要用中间价。
 
-### 4.10 时间间隔
+### 4.10 时间间隔（ACD）
 
-```
-dt_trade = 距上一笔成交的时间
-dt_mid   = 距上一次中间价变动的时间
-dt_book  = 距上一次盘口更新的时间
-ACD：ψ_i = ω + a × x_{i−1} + b × ψ_{i−1}；特征 x_i / ψ_i（意外的快或慢）
-```
+距上一笔成交、上一次中间价变动、上一次盘口更新的时间。ACD(1,1)（Engle 和 Russell 1998）：
 
-成交密集意味着信息到达或大单在执行；中间价很久没动，说明队列长、价格「卡住」（Engle 和 Russell 1998）。
+$$
+x_i = \psi_i\,\eta_i,\qquad \psi_i = \omega + a\,x_{i-1} + b\,\psi_{i-1},\qquad \eta_i \overset{\text{iid}}{\sim} \text{均值为 1 的正分布}
+$$
+
+特征 $x_i / \psi_i$（意外的快或慢）。成交密集意味着信息到达；中间价很久没动，说明队列长、价格「卡住」。
 
 ### 4.11 日内时段
 
-距开盘分钟数（分段、样条或 sin/cos）、距收盘时间、是否临近集合竞价或公告时点。成交量和波动的日内 U 形是知情交易者和流动性交易者策略性集中交易的结果（Admati 和 Pfleiderer 1988）。也可以把每个特征除以「同一时段的历史均值」做季节性标准化。
+距开盘分钟数（分段、样条或 $\sin(2\pi u), \cos(2\pi u)$，$u$ 为当日时间占比）、距收盘时间、是否临近集合竞价或公告时点。季节性标准化：$x_t / \bar x_{\text{同时段}}$。
 
 ### 4.12 其他慢变量
 
 | 变量 | 定义 | 用法 |
 |---|---|---|
-| Kyle λ | 滚动回归 `Δmid = c + λ × 带符号成交量`；或 `Δmid = c + β × OFI`，β ≈ 常数 / 深度 | 状态变量；和 OFI 交互（OFI × λ ≈ 预期冲击） |
-| Amihud | `mean(|r_d| / 成交额_d)` | 跨股票分组和标准化，不做秒级特征 |
-| VPIN | 成交量桶内 `|V_sell − V_buy|` 的均值 / 桶容量 | **有争议**（Andersen 和 Bondarenko 2014：在闪崩之后而不是之前见顶，预测力主要来自和交易强度的机械关系）。秒级信号价值有限 |
+| Kyle $\lambda$ | 滚动回归 $\Delta m = c + \lambda\,\mathrm{TI} + \epsilon$，或 $\Delta m = c + \beta\,\mathrm{OFI} + \epsilon$ | 状态变量；和 OFI 交互（$\mathrm{OFI} \times \hat\lambda$ ≈ 预期冲击） |
+| Amihud | $\mathrm{ILLIQ} = \operatorname{mean}_d \big(\lvert r_d \rvert / \text{成交额}_d\big)$ | 跨股票分组和标准化 |
+| VPIN | $\mathrm{VPIN} = \frac{1}{nV}\sum_{\tau=1}^{n} \lvert V^{\text{sell}}_\tau - V^{\text{buy}}_\tau \rvert$（成交量桶） | **有争议**（Andersen 和 Bondarenko 2014），秒级信号价值有限 |
 
 ### 4.13 汇总
 
 | 变量 | 类型 | 一句话直觉 | 优先级 |
 |---|---|---|---|
-| 最优档 QI | 状态 | 薄的一侧先被打穿 | 高（大 tick 最高） |
+| 最优档 OBI | 状态 | 薄的一侧先被打穿 | 高（大 tick 最高） |
 | 多档 / 距离加权不平衡 | 状态 | 深档压力 | 中高（小 tick 更重要） |
-| Microprice G\* | 状态 | 条件期望的未来中间价 | 高 |
-| 价差（tick） | 状态 | 流动性和 tick 约束 | 高（条件变量） |
-| 深度 | 状态 | 冲击 ∝ 1 / 深度 | 中 |
-| tick / 价格、P(S = 1) | 慢变 | 大 / 小 tick 机制不同 | 高（分组） |
+| Microprice $G^*$ | 状态 | 条件期望的未来中间价 | 高 |
+| 价差 $S_{\text{tk}}$ | 状态 | 流动性和 tick 约束 | 高（条件变量） |
+| 深度 | 状态 | 冲击 $\propto 1/\text{深度}$ | 中 |
+| $\delta/m$、$P(S_{\text{tk}} = 1)$ | 慢变 | 大 / 小 tick 机制不同 | 高（分组） |
 | OFI | 流量 | 最优档净供需 | 高 |
 | 多档 OFI | 流量 | 深档订单流 | 中 |
-| 标准化 / integrated OFI | 流量 | 多档合一、无量纲 | 高（同期）、中（预测） |
 | 跨资产滞后 OFI | 流量 | 领先 / 共同因子 | 中（极短 horizon） |
-| 成交不平衡 | 流量 | 主动买卖压力 | 中 |
+| 成交不平衡（意外部分） | 流量 | 主动买卖压力 | 中 |
 | 队列消耗速度 | 流量 | 哪侧耗尽更快 | 高（大 tick） |
 | 撤单率 | 流量 | 提供者撤退 | 中 |
 | 事件强度 | 流量 | 活跃度、自激 | 中 |
-| 波动 / 中间价变动次数 | 流量 | 能走多远 | 高（幅度、标准化） |
+| 波动、$N^{\text{mid}}$ | 流量 | 能走多远 | 高（幅度、标准化） |
 | 时间间隔 | 流量 | 信息到达速度 | 中 |
 | 日内时段 | 慢变 | U 形季节性 | 中 |
-| Kyle λ | 慢变 | 冲击系数 | 中（交互） |
+| Kyle $\lambda$ | 慢变 | 冲击系数 | 中（交互） |
 | VPIN、Amihud | 慢变 | 毒性 / 非流动性 | 低 |
 
 ## 5. 跨股票标准化
 
 目标：同一个特征值在不同股票、不同时段代表同样的市场含义，才能合并训练。
 
-1. **价格类一律以 tick 计**：价差、中间价变化、microprice 偏移、障碍宽度。小 tick 股票再并行一套以波动为单位的版本（`Δmid / σ_h`）。
-2. **量类除以自身的典型量**：OFI 除以前 M 档平均深度；队列量除以同档、同时段的历史平均；成交量除以同时段的历史平均。
-3. **比值类天然无量纲**：QI、TI_norm、撤单不平衡、`log(T_bid / T_ask)` 直接用。
-4. **滚动 z-score，只用过去的数据**。不要一次性对全训练集标准化。
-5. **时间尺度**：特征窗口可以用事件时间，或「平均中间价变动间隔」的倍数。有效 horizon 约为 2 次平均价格变动，所以「平均中间价变动间隔」本身是重要的股票属性：τ 用物理时间定（和执行决策间隔一致），不同股票在同一个 τ 内能走多远，交给这个属性去解释。
-6. **股票属性当输入**：tick_to_price、P(S = 1)、平均价差、平均队列 / 平均成交、日均成交。
-7. **提醒**：Sirignano 和 Cont（2019）发现，对大样本深度网络做归一化或按 tick 拆分训练集**没有**带来提升，网络似乎能自己学到。但对逻辑回归、GBDT 这类较小的模型，手工标准化通常仍然必要。
-8. **截面秩变换要小心**：同一时刻对所有股票做秩变换是合法的，但会抹掉整体市场状态，要同时保留原始的标准化值。
+1. **价格类一律以 tick 计**：$\Delta m/\delta$、$S_{\text{tk}}$、$G^*$、障碍宽度。小 tick 股票再并行一套以波动为单位的版本 $\Delta m / \sigma_h$。
+2. **量类除以自身的典型量**：$\mathrm{OFI}/\mathrm{AD}$；队列量除以同档、同时段的历史平均；成交量除以同时段的历史平均。
+3. **比值类天然无量纲**：OBI、$\mathrm{TI}^{\text{norm}}$、撤单不平衡、$\log(T^b/T^a)$。
+4. **滚动 z-score，只用过去的数据**：$z_t = (x_t - \hat\mu_{t^-}) / \hat\sigma_{t^-}$，$\hat\mu_{t^-}, \hat\sigma_{t^-}$ 用 $t$ 之前 $N$ 日的数据估计。不要一次性对全训练集标准化。
+5. **时间尺度**：「平均中间价变动间隔」是重要的股票属性。τ 用物理时间（和执行决策间隔一致），不同股票在同一个 τ 内能走多远，交给这个属性去解释。
+6. **股票属性当输入**：$\delta/m$、$P(S_{\text{tk}} = 1)$、$\overline{S}_{\text{tk}}$、平均队列 / 平均成交、日均成交。
+7. **提醒**：Sirignano 和 Cont（2019）发现，大样本深度网络上做归一化或按 tick 拆分训练集没有带来提升；但对逻辑回归、GBDT 这类较小的模型，手工标准化通常仍然必要。
+8. **截面秩变换要小心**：同一时刻对所有股票做秩变换是合法的，但会抹掉整体市场状态，要同时保留原始标准化值。
 
-## 6. 经济学和金融学概念
+## 6. 经济学和金融学模型
 
-| 概念 | 要点 | 对建模的指导 |
-|---|---|---|
-| **Kyle（1985）** | 一个知情者、噪声交易者、竞争性做市商；价格线性响应净订单流，斜率 λ 是市场深度的倒数；知情者把信息逐步释放进价格 | 带符号订单流（OFI、TI）应是主特征；冲击系数随状态变，OFI 要和 1 / 深度、λ 交互；知情者拆单，长窗口订单流也有信息 |
-| **Glosten-Milgrom（1985）** | 只要有知情交易者，即使做市商零利润，也会有正的价差；每笔成交都会更新报价 | **挂单被成交本身就是坏消息**（逆向选择），评估挂单要看成交后的 markout；信号和自己方向相反还挂单，等于主动接受逆向选择 |
-| **价格冲击** | 短窗口内 OFI 和价格变化近似线性（CKS 2014）；大母单的总冲击对规模呈凹的平方根律（Tóth 等 2011）；冲击是瞬时的、会衰减（传播子模型，Bouchaud 等 2004） | 短 horizon 用线性 OFI，长窗口用 `sign × sqrt` 之类的凹变换；**训练数据里的 OFI 不含自己的影响，上线后要扣除自身冲击**；执行速度要同时考虑信号带来的 alpha 和冲击成本 |
-| **订单流长记忆** | 订单符号的自相关按幂律衰减（Lillo 和 Farmer 2004），主要来自大单拆分执行；价格却接近随机游走 | **「下一笔成交方向」高度可预测，但这不等于价格可预测**，这正是旧标签的陷阱；特征要包含订单流的「意外部分」 |
-| **价格发现** | 交易的信息含量可以用 VAR 中交易新息的累计价格响应来量（Hasbrouck 1991）；多市场有信息份额（Hasbrouck 1995） | 主导价格发现的关联品种（期货、ETF）的滞后变量是天然的领先特征 |
-| **队列位置的价值** | 价格-时间优先下，排在前面的订单更值钱：成交时赚价差和被逆向选择的权衡（越靠后逆向选择越重），加上动态的期权价值（Moallemi 和 Yuan） | 撤单还是保留要看自己的队位，好队位撤单成本高；大 tick 股票队列长，队位价值更突出 |
-| **Roll 价差估计** | 交易成本使成交价变化负序列相关：`价差 = 2 × sqrt(−Cov(Δp_t, Δp_{t−1}))`（Roll 1984） | 成交价序列天然有负自相关，用它做标签或特征会引入假的均值回复 |
-| **Bid-ask bounce** | 成交价在买一和卖一之间跳，不是价值变化 | **旧标签的核心缺陷**：上一笔在买一、下一笔在卖一，就记为涨，其实中间价没动 |
-| **tick 约束** | 大 tick：价差几乎总是 1 档，队列长，变动稀少，冲击近似永久，不平衡预测力强；小 tick：价差多档，盘口稀疏，冲击依赖历史，可预测性弱 | 按 tick 类别分组或交互；「一档」障碍对大 tick 是主要事件，对小 tick 可能只是噪声，小 tick 用 k 档或 σ 做单位 |
-| **信号驱动的最优执行** | 加入马尔可夫信号后，最优策略是对 Almgren-Chriss 基准的修正（Lehalle 和 Neuman 2019；Cartea 和 Jaimungal 2016） | **信号输出最好是带时间尺度的期望漂移和不确定性**，而不只是类别，这样才能直接嵌入执行优化 |
+### 6.1 Kyle（1985）：订单流携带信息，冲击系数 = 深度的倒数
+
+单期模型：资产价值 $v \sim \mathcal{N}(p_0, \Sigma_0)$，知情者下单 $x$，噪声交易 $u \sim \mathcal{N}(0, \sigma_u^2)$，做市商只看到总订单流 $y = x + u$ 并按期望定价。均衡是线性的：
+
+$$
+x = \beta\,(v - p_0),\qquad p = p_0 + \lambda\,y,\qquad
+\beta = \frac{\sigma_u}{\sqrt{\Sigma_0}},\qquad
+\lambda = \frac{\sqrt{\Sigma_0}}{2\,\sigma_u}
+$$
+
+**指导**：带符号订单流（OFI、TI）应是主特征；$\lambda$ 随状态变（信息越不对称、噪声交易越少，$\lambda$ 越大），所以 OFI 要和 $1/\text{深度}$、$\hat\lambda$ 交互；多期版本里知情者把信息逐步释放（拆单），所以较长窗口的订单流也有信息。
+
+### 6.2 Glosten-Milgrom（1985）：价差来自逆向选择
+
+价值 $V \in \{V_L, V_H\}$ 各占一半，比例 $\mu$ 的交易者知情，其余随机买卖。做市商零利润，报价等于条件期望：
+
+$$
+\text{ask} = \mathbb{E}[V \mid \text{买}],\qquad \text{bid} = \mathbb{E}[V \mid \text{卖}],\qquad
+P(V_H \mid \text{买}) = \frac{1 + \mu}{2}
+\ \Longrightarrow\
+\text{ask} - \text{bid} = \mu\,(V_H - V_L)
+$$
+
+**指导**：**挂单被成交本身就是坏消息**。评估挂单要看成交后的 markout；信号和自己方向相反还挂单，等于主动接受逆向选择。价差宽度和信息不对称相关，可以当状态变量。
+
+### 6.3 价格冲击：线性、平方根律、传播子
+
+- 短窗口内 OFI 和价格变化近似线性（4.1 节）。
+- 大母单的总冲击对规模呈凹的**平方根律**（Tóth 等 2011）：
+
+$$
+\mathcal{I}(Q) \approx Y\,\sigma_D\,\sqrt{\frac{Q}{V_D}},\qquad Y = O(1)
+$$
+
+$\sigma_D$ 是日波动，$V_D$ 是日成交量。
+
+- 冲击是瞬时的、会衰减（传播子模型，Bouchaud 等 2004）：
+
+$$
+m_t = m_{-\infty} + \sum_{s < t} G(t - s)\,\varepsilon_s\,f(v_s) + \text{噪声},\qquad G(\ell) \sim \ell^{-\gamma}
+$$
+
+**指导**：短 horizon 用线性 OFI，长窗口用 $\varepsilon\sqrt{v}$ 之类的凹变换；**训练数据里的 OFI 不含自己的冲击，上线后要扣除**；执行速度要同时考虑信号带来的 alpha 和冲击成本。
+
+### 6.4 订单流长记忆
+
+订单符号的自相关按幂律衰减（Lillo 和 Farmer 2004）：
+
+$$
+C(\ell) = \mathbb{E}[\varepsilon_t\,\varepsilon_{t+\ell}] \sim c\,\ell^{-\gamma},\qquad \gamma \approx 0.6 < 1
+$$
+
+$\sum_\ell C(\ell)$ 发散，这是长记忆，主要来自大单拆分执行。但价格接近随机游走，因为流动性做了反向调整（传播子 $G$ 的衰减正好抵消了符号的持续性）。**「下一笔成交方向」高度可预测，但这不等于价格可预测**，这正是旧标签的陷阱。
+
+### 6.5 价格发现
+
+交易的信息含量可以用收益和成交符号的 VAR 中、交易新息的累计价格响应来度量（Hasbrouck 1991）；多个市场交易同一资产时有「信息份额」（Hasbrouck 1995）。**指导**：主导价格发现的关联品种（期货、ETF）的滞后变量是天然的领先特征。
+
+### 6.6 队列位置的价值
+
+价格-时间优先下，排在前面的订单更值钱：成交时赚价差和被逆向选择的权衡（越靠后，逆向选择越重），加上「随时可以撤」的期权价值（Moallemi 和 Yuan）。**指导**：撤单还是保留要看自己的队位，好队位撤单成本高；大 tick 股票队列长，队位价值更突出。
+
+### 6.7 Roll（1984）价差估计和 bid-ask bounce
+
+成交价 $p_t = m_t + \frac{S}{2}\varepsilon_t$，中间价是随机游走、符号独立时：
+
+$$
+\mathrm{Cov}(\Delta p_t, \Delta p_{t-1}) = -\frac{S^2}{4}
+\quad\Longrightarrow\quad
+\hat S = 2\sqrt{-\mathrm{Cov}(\Delta p_t, \Delta p_{t-1})}
+$$
+
+**指导**：成交价序列天然有负自相关，用它做标签或特征会引入假的均值回复。**旧标签的核心缺陷**：上一笔在买一、下一笔在卖一，就记为「涨」，其实中间价没动。
+
+### 6.8 tick 约束
+
+大 tick：价差几乎总是 1 档，队列长，变动稀少，冲击近似永久，不平衡预测力强；小 tick：价差多档，盘口稀疏，冲击依赖历史，可预测性弱（Eisler 等 2012；Briola 等 2025）。**指导**：按 tick 类别分组或交互；「一档」障碍对大 tick 是主要事件，对小 tick 可能只是噪声，小 tick 用 $k$ 档或 $\sigma$ 做单位。
+
+### 6.9 信号驱动的最优执行
+
+加入马尔可夫信号 $\alpha_t$（如 OU 型的不平衡信号 $d\alpha_t = -\kappa\alpha_t\,dt + \eta\,dW_t$）后，最优交易速度是对 Almgren-Chriss 基准的修正，修正项和信号的期望累计漂移成正比（Lehalle 和 Neuman 2019；Cartea 和 Jaimungal 2016）。**指导**：信号输出最好是**带时间尺度的期望漂移和不确定性**，而不只是类别。
 
 ## 7. 预测目标
 
 ### 7.1 候选
 
-```
-(A) 下一次中间价变动方向
-    y = sign(mid(τ_1) − mid(t))，τ_1 = t 之后中间价首次变化的时刻
-(B) 固定窗口的中间价收益
-    y = (mid(t + h) − mid(t)) / δ
-(C) FI-2010 平滑标签
-    m_plus = (1/k) Σ_{i=1..k} mid(t + i)
-    l = (m_plus − mid(t)) / mid(t)
-    y = +1 若 l > α；−1 若 l < −α；否则 0          （α = 0.002）
-(D) 三重障碍
-    上障碍 mid(t) + b·δ，下障碍 mid(t) − b·δ（b 默认 1），时间障碍 t + τ
-    y = +1 先触上；−1 先触下；0 都没触到
-(E) 首达时间 / 竞争风险
-    T = min(T_up, T_down)，事件类型 J ∈ {up, down}，在 τ_max 处删失
-    建模 cause-specific hazard：h_up(s | x)、h_down(s | x)
-    累积发生函数 CIF_up(τ | x) = P(T <= τ, J = up | x)
-(F) 幅度分档
-    {<= −2, −1, 0, +1, >= +2} tick；或 P(动) × P(方向 | 动) × P(|Δ| = j | 动, 方向)
-(G) 分位数
-    q_α(mid(t + h) − mid(t) | x)，pinball loss
-(H) Markout
-    side × (mid(t_fill + h) − p_fill) / δ
-```
+**(A) 下一次中间价变动方向**：$y = \operatorname{sign}(m_{\tau_1} - m_t)$，$\tau_1$ 是 $t$ 之后中间价首次变化的时刻。
+
+**(B) 固定窗口收益**：$y = (m_{t+h} - m_t)/\delta$。
+
+**(C) FI-2010 平滑标签**：
+
+$$
+m^+_t = \frac{1}{k}\sum_{i=1}^{k} m_{t+i},\qquad
+l_t = \frac{m^+_t - m_t}{m_t},\qquad
+y_t = \begin{cases} +1 & l_t > \alpha \\ -1 & l_t < -\alpha \\ 0 & \text{其他} \end{cases}
+\qquad (\alpha = 0.002)
+$$
+
+**(D) 三重障碍**：上障碍 $m_t + b\delta$，下障碍 $m_t - b\delta$（$b$ 默认 1），时间障碍 $t + \tau$：
+
+$$
+y_t = \begin{cases} +1 & \tau^{\uparrow} < \min(\tau^{\downarrow}, t+\tau) \\ -1 & \tau^{\downarrow} < \min(\tau^{\uparrow}, t+\tau) \\ 0 & \text{都没在 } t+\tau \text{ 前触到} \end{cases},
+\qquad
+\tau^{\uparrow} = \inf\{s > t : m_s \ge m_t + b\delta\}
+$$
+
+**(E) 首达时间 / 竞争风险**：$T = \min(\tau^\uparrow, \tau^\downarrow) - t$，事件类型 $J \in \{\uparrow, \downarrow\}$，在 $\tau_{\max}$ 处删失。建模 cause-specific hazard 和累积发生函数：
+
+$$
+h_j(s \mid x) = \lim_{\Delta \to 0}\frac{P(s \le T < s + \Delta,\ J = j \mid T \ge s, x)}{\Delta},
+\qquad
+\mathrm{CIF}_j(\tau \mid x) = P(T \le \tau,\ J = j \mid x) = \int_0^\tau h_j(s \mid x)\,S(s^- \mid x)\,ds
+$$
+
+$S(s \mid x) = \exp\big(-\int_0^s (h_\uparrow + h_\downarrow)\big)$ 是「还没触达」的概率。离散时间版本见 [`ml-pipeline.md`](ml-pipeline.md) 1.5 节。
+
+**(F) 幅度（hurdle 结构）**：
+
+$$
+P(\Delta = j) = P(\text{动}) \cdot P(\text{方向} \mid \text{动}) \cdot P\big(\lvert\Delta\rvert = j \mid \text{动}, \text{方向}\big),\qquad j \in \{1, 2, \ge 3\} \text{ tick}
+$$
+
+**(G) 分位数**：$q_\alpha\big(m_{t+h} - m_t \mid x\big)$，用 pinball loss $\ell_\alpha(e) = \max(\alpha e, (\alpha - 1)e)$ 训练。
+
+**(H) Markout**：$d\,(m_{t_{\text{fill}} + h} - p_{\text{fill}})/\delta$。
 
 ### 7.2 对比
 
 | 目标 | 优点 | 缺点 | 适合执行吗 |
 |---|---|---|---|
-| (A) 下一次变动方向 | 去掉了「不变」；对应大 tick 的机制；基准多 | **没有时间尺度**：下一次可能 1 毫秒后，也可能 10 分钟后；没有幅度 | 部分适合，要配「何时动」的模型 |
-| (B) 固定窗口收益 | 有幅度，能直接和成本比 | 大 tick 股票零值大量堆积；异方差；h 难选 | 适合当期望漂移，要配分布输出 |
-| (C) 平滑标签 | 降低标签噪声，类别相对平衡 | 见下 | **不推荐** |
-| (D) 三重障碍 | 贴近「先赚一档还是先亏一档」；有时间尺度 τ；「没动」有明确含义 | τ 和 b 要选；「没动」混合了「安静」和「来回」 | **适合，好的起点** |
-| (E) 首达 / 竞争风险 | 一个模型给出任意 τ 的概率和预期等待时间；处理删失；和排队模型的理论对应 | 实现更复杂 | **最适合**：「多快」和「往哪」一起给 |
-| (F) 幅度分档 | 对应「涨跌分开、幅度另建模」 | 极端档样本少 | 第二阶段 |
-| (G) 分位数 | 给出不确定性和尾部 | 价格离散时分位数退化，大 tick 几乎总是 0 或 ±1 | 主要适合小 tick 或较长 h |
-| (H) Markout | 最贴近执行的经济结果 | 只在成交条件下定义，有样本选择 | **适合当评估指标和决策阈值**，不宜当通用标签 |
+| (A) 下一次变动方向 | 去掉了「不变」；对应大 tick 的机制；基准多 | **没有时间尺度**；没有幅度 | 部分适合，要配「何时动」的模型 |
+| (B) 固定窗口收益 | 有幅度，能直接和成本比 | 大 tick 股票零值大量堆积；异方差 | 适合当期望漂移，要配分布输出 |
+| (C) 平滑标签 | 降低标签噪声，类别相对平衡 | 见 7.3 节 | **不推荐** |
+| (D) 三重障碍 | 贴近「先赚一档还是先亏一档」；有时间尺度 | τ 和 $b$ 要选；「没动」混合了「安静」和「来回」 | **适合，好的起点** |
+| (E) 首达 / 竞争风险 | 一个模型给出一组 τ 的概率和预期等待时间；处理删失 | 实现更复杂 | **最适合** |
+| (F) 幅度 | 对应「涨跌分开、幅度另建模」 | 极端档样本少 | 第二阶段 |
+| (G) 分位数 | 给出不确定性和尾部 | 价格离散时退化，大 tick 几乎总是 0 或 ±1 | 主要适合小 tick 或较长 $h$ |
+| (H) Markout | 最贴近执行的经济结果 | 只在成交条件下定义，有样本选择 | **当评估指标**，不当通用标签 |
 
 ### 7.3 平滑标签的问题
 
 文献指出的：
 
-1. **阈值不是按经济含义选的**，是为了平衡类别（LOBCAST 原文）。同一个 α 只在 k = 5 时类别平衡。
-2. **类别分布对 horizon 极其敏感**：k = 1 时上 / 平 / 下 = 18 / 63 / 19，k = 10 时 37 / 25 / 38。改 k 实际上是在改问题。
-3. **只平滑未来**会让信号不一致，用于交易会产生冗余交易（DeepLOB 原文）。
+1. **阈值不是按经济含义选的**，是为了平衡类别（LOBCAST 原文）。同一个 $\alpha$ 只在 $k = 5$ 时类别平衡。
+2. **类别分布对 horizon 极其敏感**：$k = 1$ 时上 / 平 / 下 = 18 / 63 / 19，$k = 10$ 时 37 / 25 / 38。改 $k$ 实际上是在改问题。
+3. **只平滑未来**会让信号不一致，用于交易会产生冗余交易（DeepLOB 原文，因此 DeepLOB 改用 $l_t = (m^+_t - m^-_t)/m^-_t$，$m^-_t$ 是过去 $k$ 个中间价的均值）。
 4. **刻画的是趋势，实用性存疑**；高预测精度不等于可执行信号（Briola 等 2025）。
-5. FI-2010 数据本身已经预处理、归一化、打好标签，无法回溯原始盘口，留有大量过拟合空间。
+5. FI-2010 数据已经预处理、归一化、打好标签，无法回溯原始盘口。
 
 实现中要注意的：
 
-6. 「未来均值 vs 过去均值」的版本里，过去均值和特征窗口完全重叠，标签的一部分是「过去 k 步的趋势」，准确率虚高，对「从现在起」的交易没有价值。
-7. 相邻样本的标签共享未来价格，必须 purge 和 embargo，按日前向滚动；随机切分会严重高估。
-8. 阈值用收益率表示，跨股票不可比：同样的 α 对低价股可能小于 1 tick。用 tick 或 σ 做单位。
+6. 用 $m^-_t$ 的版本里，过去均值和特征窗口完全重叠，标签的一部分是「过去 $k$ 步的趋势」，准确率虚高，对「从现在起」的交易没有价值。
+7. 相邻样本的标签共享未来价格，必须 purge 和 embargo，按日前向滚动。
+8. 阈值用收益率表示，跨股票不可比：同样的 $\alpha$ 对低价股可能小于 1 tick。用 tick 或 $\sigma$ 做单位。
 
 ### 7.4 对当前方案（中间价三重障碍、幅度另建模、涨跌分开）的具体建议
 
-1. **障碍以中间价为基准、以 tick 为单位，并区分价差状态**。价差 = 1 档时，中间价最小变动是 0.5 档（价差扩成 2 档）或 1 档（整体平移）。障碍定义成「中间价变动 ≥ 1 tick」，把「只有价差开合」单独记一类或视为没触到。也可以用 microprice 做障碍基准，它是鞅，假触发更少。
-2. **τ 的主定义用物理时间，等于执行层实际的决策间隔**（如 1 / 5 / 30 秒），因为执行算法是按物理时间查询信号的。跨股票的可比性靠把「平均中间价变动间隔」当特征或分组变量解决。事件时间的 τ 只作对照（统一口径见 [`modeling-guide.md`](modeling-guide.md) 第 4 节）。
-3. **记录首达时间，升级为竞争风险模型**：离散时间多项 hazard（每格 {up, down, 无事件}，样本按「仍在风险中」展开）。连续时间可用 cause-specific Cox 或 Fine-Gray。提醒：Lo、MacKinlay、Zhang（2002）发现用首达时间构造的「假想成交」不能很好地代表真实成交，用「中间价首次触及」去近似「挂单能否成交」要谨慎。
-4. **「没动」细分**：「完全安静」（中间价和价差都没变）和「有活动但没触到」（价差开合、来回）。「没动」只说明 τ 内价格漂移小、等待的价格成本低，**不说明挂单会成交**：完全安静时市价单少，大 tick 股票队列又长，挂单的成交概率 q_0 往往很低；「有活动但没触到」时 q_0 通常更高，但说明波动在升高。挂单是否划算要比较 `q_0 × (s/2 − f_m)` 和 `(1 − q_0) × c_wait`，需要成交模型（推论）。
-5. **幅度用 hurdle 结构**：`P(τ 内动) × P(方向 | 动) × P(幅度 = 1, 2, ≥3 | 动, 方向)`。涨跌分开能捕捉不对称，但样本要够，或者共享大部分参数、只让方向相关的项分开。
+1. **障碍以中间价为基准、以 tick 为单位，并区分价差状态**。价差 = 1 档时，中间价最小变动是 $\delta/2$（价差扩成 2 档）或 $\delta$（整体平移）。障碍定义成 $\lvert m_s - m_t \rvert \ge \delta$，把「只有价差开合」视为没触到或单独一类。也可以用 microprice 做障碍基准，它是鞅，假触发更少。
+2. **τ 的主定义用物理时间，等于执行层实际的决策间隔**（如 1 / 5 / 30 秒）。跨股票的可比性靠把「平均中间价变动间隔」当特征解决（统一口径见 [`modeling-guide.md`](modeling-guide.md) 第 4 节）。
+3. **记录首达时间，升级为竞争风险模型**（7.1 节 (E)）。提醒：Lo、MacKinlay、Zhang（2002）发现用首达时间构造的「假想成交」不能很好地代表真实成交，用「中间价首次触及」去近似「挂单能否成交」要谨慎。
+4. **「没动」细分**：「完全安静」（中间价和价差都没变）和「有活动但没触到」。「没动」只说明 τ 内价格漂移小、等待的价格成本低，**不说明挂单会成交**：完全安静时挂单的成交概率 $q_0$ 往往很低。挂单是否划算要比较 $q_0\,(S/2 - f_m)$ 和 $(1 - q_0)\,c_{\text{wait}}$，需要成交模型。
+5. **幅度用 hurdle 结构**（7.1 节 (F)），涨跌分开；样本不够时共享大部分参数、只让方向相关的项分开。
 6. **评估面向执行**：概率校准；MCC 或 macro-F1；覆盖率-精度曲线；挂单 markout、吃单和挂单切换的收益；按 tick 类别、时段、波动分层。
-7. **基线**：「QI + 逻辑回归 + 下一次中间价变动」（Gould 和 Bonart）和 microprice，本身就是强基线。新模型必须在执行指标上打败它们。
+7. **基线**：「OBI + 逻辑回归 + 下一次中间价变动」（Gould 和 Bonart）和 microprice 本身就是强基线，新模型必须在执行指标上打败它们。
 
 ## 参考文献
 
@@ -384,28 +525,23 @@ ACD：ψ_i = ω + a × x_{i−1} + b × ψ_{i−1}；特征 x_i / ψ_i（意外�
 - Cont, Kukanov, Stoikov (2014). The price impact of order book events. *J. Financial Econometrics* 12(1):47–88. https://arxiv.org/abs/1011.6402
 - Xu, Gould, Howison (2019). Multi-level order-flow imbalance in a limit order book. https://arxiv.org/abs/1907.06230
 - Cont, Cucuringu, Zhang (2023). Cross-impact of order flow imbalance in equity markets. *Quantitative Finance* 23(10):1373–1393. https://arxiv.org/abs/2112.13213
-- Su 等 (2021). The price impact of generalized order flow imbalance. https://arxiv.org/abs/2112.02947
 - Stoikov (2018). The micro-price: a high-frequency estimator of future prices. *Quantitative Finance* 18(12):1959–1966.
 - Gould, Bonart (2016). Queue imbalance as a one-tick-ahead price predictor in a limit order book. https://arxiv.org/abs/1512.03492
 - Cartea, Donnelly, Jaimungal (2018). Enhancing trading strategies with order book signals. *Applied Mathematical Finance* 25(1):1–35.
-- Lehalle, Mounjid. Limit order strategic placement with adverse selection risk and the role of latency. https://arxiv.org/abs/1610.00261
 - Dayri, Rosenbaum (2015). Large tick assets: implicit spread and optimal tick size. *Market Microstructure and Liquidity* 1(1). https://arxiv.org/abs/1207.6325
-- Curato, Lillo (2015). Modeling the coupled return-spread high frequency dynamics of large tick assets. *J. Stat. Mech.* P01028. https://arxiv.org/abs/1310.4539
 - Eisler, Bouchaud, Kockelkoren (2012). The price impact of order book events: market orders, limit orders and cancellations. *Quantitative Finance*. https://arxiv.org/abs/0904.0900
 - Huang, Lehalle, Rosenbaum (2015). Simulating and analyzing order book data: the queue-reactive model. *JASA* 110:107–122.
 - Cont, Stoikov, Talreja (2010). A stochastic model for order book dynamics. *Operations Research* 58(3):549–563.
 - Cont, de Larrard (2013). Price dynamics in a Markovian limit order market. *SIAM J. Financial Mathematics* 4(1):1–25.
 - Bacry, Mastromatteo, Muzy (2015). Hawkes processes in finance. *Market Microstructure and Liquidity* 1(1). https://arxiv.org/abs/1502.04592
 - Engle, Russell (1998). Autoregressive conditional duration. *Econometrica* 66(5):1127–1162.
-- Zhang, Mykland, Aït-Sahalia (2005). A tale of two time scales. *JASA* 100(472):1394–1411.
 - Lee, Ready (1991). Inferring trade direction from intraday data. *Journal of Finance* 46(2):733–746.
 - Chakrabarty, Pascual, Shkilko (2015). Evaluating trade classification algorithms. *J. Financial Markets* 25:52–79.
 - Easley, López de Prado, O'Hara (2012). Flow toxicity and liquidity in a high-frequency world. *RFS* 25(5):1457–1493.
-- Easley, López de Prado, O'Hara (2016). Discerning information from trade data. *JFE* 120(2):269–285.
 - Andersen, Bondarenko (2014). VPIN and the flash crash. *J. Financial Markets* 17.
 - Amihud (2002). Illiquidity and stock returns. *J. Financial Markets* 5(1):31–56.
 
-**经济学概念**
+**经济学模型**
 
 - Kyle (1985). Continuous auctions and insider trading. *Econometrica* 53(6):1315–1335.
 - Glosten, Milgrom (1985). Bid, ask and transaction prices in a specialist market with heterogeneously informed traders. *JFE* 14(1):71–100.
@@ -415,12 +551,9 @@ ACD：ψ_i = ω + a × x_{i−1} + b × ψ_{i−1}；特征 x_i / ψ_i（意外�
 - Hasbrouck, Seppi (2001). Common factors in prices, order flows, and liquidity. *JFE* 59(3):383–411.
 - Lillo, Farmer (2004). The long memory of the efficient market. *Studies in Nonlinear Dynamics & Econometrics* 8.
 - Bouchaud, Gefen, Potters, Wyart (2004). Fluctuations and response in financial markets. *Quantitative Finance* 4(2):176–190.
-- Bouchaud, Farmer, Lillo (2009). How markets slowly digest changes in supply and demand. https://arxiv.org/abs/0809.0822
 - Tóth 等 (2011). Anomalous price impact and the critical nature of liquidity. *Physical Review X* 1:021006.
-- Admati, Pfleiderer (1988). A theory of intraday patterns. *RFS* 1(1):3–40.
-- Chordia, Roll, Subrahmanyam (2002). Order imbalance, liquidity, and market returns. *JFE* 65(1):111–130.
 - Chinco, Clark-Joseph, Ye (2019). Sparse signals in the cross-section of returns. *Journal of Finance* 74(1):449–492.
-- Moallemi, Yuan. A model for queue position valuation in a limit order book. （工作论文，期刊未核实）
+- Moallemi, Yuan. A model for queue position valuation in a limit order book.（工作论文，期刊未核实）
 - Lehalle, Neuman (2019). Incorporating signals into optimal trading. *Finance and Stochastics* 23(2):275–311.
 - Cartea, Jaimungal (2016). Incorporating order-flow into optimal execution. *Mathematics and Financial Economics* 10:339–364.
 
@@ -434,10 +567,6 @@ ACD：ψ_i = ω + a × x_{i−1} + b × ψ_{i−1}；特征 x_i / ψ_i（意外�
 - Lo, MacKinlay, Zhang (2002). Econometric models of limit-order executions. *JFE* 65(1):31–71.
 - Fine, Gray (1999). A proportional hazards model for the subdistribution of a competing risk. *JASA* 94(446):496–509.
 - López de Prado (2018). *Advances in Financial Machine Learning*. Wiley.
-
-**教科书和综述**
-
 - Bouchaud, Bonart, Donier, Gould (2018). *Trades, Quotes and Prices*. Cambridge University Press.
-- Gould 等 (2013). Limit order books. *Quantitative Finance* 13(11):1709–1742. https://arxiv.org/abs/1012.0349
 
-未核实：Xu、Gould、Howison 的期刊卷期；Gould 和 Bonart 的期刊版本；Capponi 和 Cont（2020）「跨冲击不足总冲击 1%」的原文；加权中间价最早出处的细节。
+未核实：Xu、Gould、Howison 的期刊卷期；Gould 和 Bonart 的期刊版本；加权中间价最早出处的细节。
