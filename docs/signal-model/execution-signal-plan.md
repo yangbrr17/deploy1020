@@ -1,6 +1,6 @@
 # 执行用的 OBI / OFI 信号：建模方案
 
-2026-10 调研后整理。指标定义和特征清单见 [`obi-ofi-basics.md`](obi-ofi-basics.md)。文献都核对过出处（期刊、年份、链接），少数打不开原文的标了「未核实」。
+2026-10 调研后整理。建模总览见 [`modeling-guide.md`](modeling-guide.md)，变量和标签见 [`features-and-targets.md`](features-and-targets.md)。文献都核对过出处（期刊、年份、链接），少数打不开原文的标了「未核实」。
 
 ## 场景假设
 
@@ -120,7 +120,7 @@
 - 收益通常是几个 bp，比较的基准大多是 TWAP 这类弱基准。
 - 结果多数来自不考虑自身冲击的历史回放或模拟器。
 - 没有找到公开的实盘对照结果。
-- 业界公开的做法（如 Bacoyannis 等 2018）是用强化学习决定限价单放在哪里，动作范围有限，外面套着常规的排程和风控。
+- 和本方案最接近的公开工作是「监督成交概率 + 一步决策」（Fabre 和 Ragel 2023）和「市价 / 限价分配」（Cheridito 和 Weiss 2025），动作范围有限，外面套着常规的排程和风控。详见 [`reinforcement-learning.md`](reinforcement-learning.md)。
 
 **限制：**
 
@@ -190,6 +190,8 @@
 - Nevmyvaka, Feng, Kearns (2006). Reinforcement learning for optimized trade execution. *ICML*.
 - Ning, Lin, Jaimungal (2021). Double deep Q-learning for optimal execution. *Applied Mathematical Finance*. https://ar5iv.arxiv.org/html/1812.06600
 - Lin, Beling (2020). *IJCAI*. https://www.ijcai.org/Proceedings/2020/0627.pdf
-- Bacoyannis 等 (2018). 限价单放置的强化学习引擎. https://arxiv.org/abs/1811.09549
+- Bacoyannis 等 (2018). Idiosyncrasies and challenges of data driven learning in electronic trading. *NeurIPS 2018 Workshop*. https://arxiv.org/abs/1811.09549
+- Fabre, Ragel (2023). Interpretable ML for high-frequency execution. https://arxiv.org/abs/2307.04863
+- Cheridito, Weiss (2025). Reinforcement learning for trade execution with market and limit orders. https://arxiv.org/abs/2507.06345
 - Hambly, Xu, Yang (2023). Recent advances in reinforcement learning in finance. *Mathematical Finance* 33(3). https://arxiv.org/abs/2112.04553
 - ABIDES-Gym. https://arxiv.org/abs/2110.14771 （原仓库 2025 年 6 月已归档）
