@@ -23,7 +23,6 @@ NAV = [
         ("docs/signal-model/reinforcement-learning.md", "强化学习与模拟器"),
         ("docs/signal-model/repos.md", "开源仓库清单"),
         ("docs/signal-model/execution-signal-plan.md", "执行信号方案"),
-        ("docs/signal-model/pooled-model.md", "通用模型"),
     ]),
     ("Agent 平台", [
         ("docs/agent-platform/architecture.md", "选型与架构"),

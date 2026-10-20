@@ -19,7 +19,7 @@
 | [hudson-and-thames/mlfinlab](https://github.com/hudson-and-thames/mlfinlab) | AFML 方法库 | **专有协议**，现在付费订阅 | 4.9k | 2021-12 | **不建议引入**，包括它的 fork |
 | [baobach/mlfinpy](https://github.com/baobach/mlfinpy) | 从零重写的 AFML 实现，含 sequential bootstrap | MIT | 89 | 2026-10 | 可参考 |
 | [RiskLabAI/RiskLabAI.py](https://github.com/RiskLabAI/RiskLabAI.py) | 三重障碍、meta-labeling、唯一性权重、purged / combinatorial CV | BSD-3 | 8 | 2026-10 | 可参考 |
-| [sam31415/timeseriescv](https://github.com/sam31415/timeseriescv) | `PurgedWalkForwardCV`、`CombPurgedKFoldCV`，按标签结束时间做 purge | MIT | 290 | 2022-02 | 不再维护，复制进内部仓库再用 |
+| [sam31415/timeseriescv](https://github.com/sam31415/timeseriescv) | `PurgedWalkForwardCV`、`CombPurgedKFoldCV`，按标签结束时间做 purge | MIT | 290 | 2022-02 | 不再维护，复制到自己的代码库再用 |
 | [skfolio/skfolio](https://github.com/skfolio/skfolio) | `CombinatorialPurgedCV`、`WalkForward` | BSD-3 | 2.5k | 2026-10 | **默认不做 purge 和 embargo**，要自己设 |
 | [esvhd/pypbo](https://github.com/esvhd/pypbo) | PBO、Deflated Sharpe | **AGPL-3.0** | 144 | 2026-07 | 注意许可证 |
 | [stefan-jansen/machine-learning-for-trading](https://github.com/stefan-jansen/machine-learning-for-trading) | 书籍配套代码，GBDT + Optuna 示例 | MIT（代码） | 21.5k | 2026-10 | 学习用 |

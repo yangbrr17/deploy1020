@@ -22,7 +22,6 @@
 | [`docs/signal-model/reinforcement-learning.md`](docs/signal-model/reinforcement-learning.md) | 强化学习：放在哪一层、MDP、算法选择、模拟器、评估与样本量 |
 | [`docs/signal-model/repos.md`](docs/signal-model/repos.md) | GitHub 开源仓库清单：用途、许可证、维护状态 |
 | [`docs/signal-model/execution-signal-plan.md`](docs/signal-model/execution-signal-plan.md) | 信号在执行里怎么用：阈值、进度带、评估、分步计划 |
-| [`docs/signal-model/pooled-model.md`](docs/signal-model/pooled-model.md) | 从逐只股票建模改成所有股票共用一个模型 |
 
 **Agent 平台**
 
