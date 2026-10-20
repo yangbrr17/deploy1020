@@ -4,7 +4,10 @@ python3 site/build.py            # needs: pip install markdown==3.7 pymdown-exte
 
 Math: write $...$ inline and $$...$$ on their own lines; KaTeX renders them in the browser.
 Every code block gets a copy button; every display formula gets a "copy LaTeX" button.
+Python files under src/ become source pages (foo.py -> foo.py.html) with a table of their top-level
+functions and classes; Markdown links to a .py file are rewritten to that page.
 """
+import ast
 import html
 import re
 import shutil
@@ -22,6 +25,7 @@ NAV = [
         ("docs/signal-model/modeling-guide.md", "建模总览：输入、输出、改进路线", 0),
         ("docs/signal-model/features-and-targets.md", "变量与预测目标", 0),
         ("docs/signal-model/event-arrivals.md", "事件到达：下一笔什么时候来", 0),
+        ("docs/signal-model/arrival-tests.md", "到达分布检验：数据与方法", 1),
         ("docs/signal-model/ml-pipeline.md", "机器学习路线与 pipeline", 0),
         ("docs/signal-model/deep-learning.md", "深度学习：总览与训练", 0),
         ("docs/signal-model/dl/deeplob.md", "DeepLOB", 1),
@@ -31,6 +35,10 @@ NAV = [
         ("docs/signal-model/dl/ofi-tcn-gru.md", "推荐：OFI-TCN-GRU", 1),
         ("docs/signal-model/reinforcement-learning.md", "强化学习：建模与选型", 0),
         ("docs/signal-model/execution-signal-plan.md", "执行层：信号怎么用", 0),
+    ]),
+    ("代码", [
+        ("src/README.md", "代码包说明（arrivals、execrl）", 0),
+        (".github/copilot-instructions.md", "交接说明与待办", 0),
     ]),
     ("Agent 平台", [
         ("docs/agent-platform/architecture.md", "选型与架构", 0),
@@ -129,7 +137,13 @@ mermaid.initialize({startOnLoad:true,theme:dark?'dark':'neutral'});
 
 
 def out_path(src: str) -> str:
-    return "index.html" if src == "README.md" else src[:-3] + ".html"
+    if src == "README.md":
+        return "index.html"
+    if src.startswith(".github/"):            # Pages artifacts drop dot-directories
+        src = "meta/" + src[len(".github/"):]
+    if src.endswith(".py"):
+        return src + ".html"
+    return src[:-3] + ".html"
 
 
 def rel(from_out: str, to_out: str) -> str:
@@ -158,7 +172,7 @@ def render(src: str) -> tuple[str, str]:
         if re.match(r"^[a-z]+:", href) or href.startswith("#"):
             return mo.group(0)
         path, _, frag = href.partition("#")
-        if not path.endswith(".md"):
+        if not path.endswith((".md", ".py")):
             return mo.group(0)
         parts = []
         for p in (here / path).as_posix().split("/"):
@@ -172,6 +186,28 @@ def render(src: str) -> tuple[str, str]:
     body = re.sub(r'href="([^"]+)"', fix, body)
     body = re.sub(r"(<table>.*?</table>)", r'<div class="tw">\1</div>', body, flags=re.S)
     return title, body
+
+
+def render_py(src: str) -> tuple[str, str]:
+    """Source page for a Python file: module docstring, an index of top-level defs, then the code."""
+    code = (ROOT / src).read_text(encoding="utf8")
+    tree = ast.parse(code)
+    doc = ast.get_docstring(tree) or ""
+    rows = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            first = (ast.get_docstring(node) or "").strip().split("\n")[0]
+            kind = "class" if isinstance(node, ast.ClassDef) else "def"
+            rows.append(f"<tr><td><code>{kind} {html.escape(node.name)}</code></td>"
+                        f"<td>{node.lineno}</td><td>{html.escape(first)}</td></tr>")
+    index = ("<div class=\"tw\"><table><tr><th>定义</th><th>行</th><th>说明（docstring 第一行）</th></tr>"
+             + "".join(rows) + "</table></div>") if rows else ""
+    body = (f"<h1>{html.escape(src)}</h1>"
+            + (f"<pre><code class=\"language-text\">{html.escape(doc)}</code></pre>" if doc else "")
+            + index
+            + f"<h2>源码（{len(code.splitlines())} 行）</h2>"
+            + f"<pre><code class=\"language-python\">{html.escape(code)}</code></pre>")
+    return src, body
 
 
 def nav_html(cur: str) -> str:
@@ -192,9 +228,13 @@ def nav_html(cur: str) -> str:
 def build():
     if OUT.exists():
         shutil.rmtree(OUT)
-    sources = ["README.md"] + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
+    sources = (["README.md", ".github/copilot-instructions.md"]
+               + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
+               + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src").rglob("*.md"))
+               + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src").rglob("*.py")
+                        if "__pycache__" not in p.parts))
     for src in sources:
-        title, body = render(src)
+        title, body = render_py(src) if src.endswith(".py") else render(src)
         has_math = 'class="arithmatex"' in body
         has_mermaid = 'class="mermaid"' in body
         math_head = (f'<link rel="stylesheet" href="{KATEX}/katex.min.css">\n'

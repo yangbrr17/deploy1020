@@ -2,7 +2,7 @@
 
 2026-10 整理。强化学习（RL）在执行里放在哪一层，状态、动作、奖励、价值函数怎么写；RL 有哪几类，各自的核心公式；按我们的约束逐项比较以后，哪一种最可靠，以及它的完整算法。监督信号本身见 [`modeling-guide.md`](modeling-guide.md)。
 
-运行环境假设：Intel i9 级别的 CPU（8–24 核），没有 GPU。
+运行环境假设：12 代 Intel i9（例如 12900K：8 个性能核 + 8 个能效核，24 线程），没有 GPU。**全部算法的模块化实现在 [`src/execrl/`](../../src/execrl/__init__.py)，结构和训练函数见第 13 节。**
 
 ## 结论
 
@@ -12,6 +12,7 @@
 4. 当撤单重挂、排队位置这类**多步效应**确实重要时，再上**带行为约束的拟合 Q 迭代（FQI + LightGBM）**或离散 IQL（第 7 节）。PPO、DQN 只在校准过的模拟器里做研究对照，产出的策略要蒸馏成浅决策树。
 5. **前提是日志里有受控随机化**，并记录每个动作被选中的概率。没有这一步，第 3、4 条都做不了。
 6. 在 i9 CPU 上，bandit 和 FQI 是分钟级，小网络的离线 RL 和模拟器里的 PPO 是小时级。瓶颈是模拟器的速度，不是算力。
+7. **代码按「配置 / 数据 / 动作与奖励 / 算法 / 训练入口」分层**（第 13 节）：每种方法一个 `train_*` 函数，步骤固定为「数据 → 按母单切分 → 拟合 → 离线评估 + 模拟器真值 → 保存」，新增方法照抄一个即可。在玩具模拟器上，bandit 的 DR 估计落在真值的一个标准误以内；约束 FQI 和 IQL 都优于日志策略（第 13.6 节）。
 
 ## 1. 分层
 
@@ -353,7 +354,9 @@ def off_policy_value(pi_a, a, r, p, mu_hat, clip=20.0):
     return {"ipw": ipw, "snipw": snipw, "dr": dr, "dr_se": se}
 ```
 
-安全集内的线性 Thompson 采样：
+完整实现（交叉拟合、按母单聚类的标准误、上线门槛、权重截断敏感性）：[`bandit/reward_model.py`](../../src/execrl/bandit/reward_model.py)、[`bandit/ope.py`](../../src/execrl/bandit/ope.py)；训练入口 [`train.train_bandit`](../../src/execrl/train.py)。
+
+安全集内的线性 Thompson 采样（完整版带蒙特卡洛倾向得分：[`bandit/thompson.py`](../../src/execrl/bandit/thompson.py)）：
 
 ```python
 import numpy as np
@@ -460,7 +463,9 @@ def constrained_greedy(q, S, mask, behaviour_prob, K, tau=0.1):
     return np.where(mask & support, qs, -np.inf).argmax(axis=1)
 ```
 
-（在一个 5 步的玩具切片上验证过：信号有利时学到挂单，信号不利时学到「先等、最后一步再吃」，和手算的最优解一致。）
+（在一个 5 步的玩具切片上验证过：信号有利时学到挂单，信号不利时学到「先等、最后一步再吃」，和手算的最优解一致。）完整实现：[`offline/fqi.py`](../../src/execrl/offline/fqi.py)、行为策略模型 [`offline/behaviour.py`](../../src/execrl/offline/behaviour.py)、训练入口 [`train.train_fqi`](../../src/execrl/train.py)。
+
+**支撑阈值 $\varsigma$ 必须低于日志的探索比例。** 日志策略以 $\varepsilon$ 在 $k$ 个允许动作里探索时，非规则动作和规则动作的概率比是 $\dfrac{\varepsilon/k}{1-\varepsilon+\varepsilon/k}$，$\varepsilon=0.1$、$k=5$ 时约 0.02。$\varsigma=0.1$ 会把所有探索过的动作都剪掉，FQI 只能复制规则：在玩具模拟器上实测，$\varsigma=0.1$ 时 FQI 和日志策略持平，$\varsigma=0.01$ 时明显更好（第 13.6 节）。代码默认 $\varsigma=0.01$。
 
 ### 7.2 IQL（神经网络备选）
 
@@ -483,6 +488,7 @@ $$
 - 期望分位数 $\kappa_e \in (0.5, 1)$：$\kappa_e$ 越接近 1，$V$ 越接近日志里动作的最大 $Q$（越激进）。常用 0.7–0.9。
 - $\beta$ 是优势加权的温度：$\beta \to 0$ 是行为克隆，越大越贪心。常用 3–10，权重截断到 100。
 - 网络：2 层 MLP，256 单元，Adam，学习率 3e-4。$10^6$ 条转移在 i9 上训练约 1–3 小时。
+- 完整实现：[`offline/iql.py`](../../src/execrl/offline/iql.py)（双 Q、目标网络 Polyak 平均、带动作屏蔽的策略），FQE 在 [`offline/fqe.py`](../../src/execrl/offline/fqe.py)。
 
 ### 7.3 CQL（另一个备选）
 
@@ -568,7 +574,7 @@ def gae(rewards, values, gamma=1.0, lam=0.95):
     return adv
 ```
 
-现成实现：Stable-Baselines3 的 SB3-Contrib 有 `MaskablePPO`（MIT）。训练出的策略要**蒸馏成深度 4–6 的决策树**（用策略在大量状态上的动作当标签训练分类树），树的表现不显著变差才可能上线（Vyetrenko 和 Xu 2019）。
+完整实现：[`online/ppo.py`](../../src/execrl/online/ppo.py)（向量化环境、GAE、PPO 更新、蒸馏成决策树）。现成实现：Stable-Baselines3 的 SB3-Contrib 有 `MaskablePPO`（MIT）。训练出的策略要**蒸馏成深度 4–6 的决策树**（用策略在大量状态上的动作当标签训练分类树），树的表现不显著变差才可能上线（Vyetrenko 和 Xu 2019）。
 
 ## 9. 解析基线
 
@@ -671,14 +677,214 @@ $$
 - **冠军-挑战者**：新版本先影子运行，再小流量对照，再替换；保留一键回退到规则策略。
 - **监控**：状态分布、动作分布、成本、信号校准度的漂移；超阈值自动回退。
 
-## 13. 算力（i9 CPU，没有 GPU）
+## 13. 代码：模块结构与训练函数
 
-| 组件 | 规模 | i9 上的量级（估计，未实测） |
+完整代码在 [`src/execrl/`](../../src/execrl/__init__.py)。每个文件开头的 docstring 写明了输入输出的形状、单位和对应的文档小节；站点上每个 `.py` 文件都有源码页，顶部列出全部函数和类（点击下面表格里的文件名即可跳转，源码块右上角有「复制」按钮）。
+
+### 13.1 目录结构
+
+```text
+src/execrl/
+├── __init__.py          包说明和阅读顺序
+├── config.py            全部超参数（dataclass），ExperimentConfig 可存取 JSON
+├── compute.py           CPU 检测（12 代 i9 的性能核 / 能效核）、线程设置、LightGBM 线程基准
+├── actions.py           6 个原子动作、宏动作、进度带屏蔽 action_mask / macro_mask
+├── reward.py            切片成本、逐步奖励、势函数塑形、宏动作奖励、价差 / 时机拆分
+├── data.py              BanditLog / Transitions 容器、校验、按母单切分、交叉拟合折
+├── simulator.py         向量化玩具环境 SliceEnv（reset/step），rollout、macro_bandit_log
+├── logging_policy.py    epsilon_rule（带倾向得分的随机化日志策略）、greedy、uniform
+├── baselines.py         TWAP、Almgren-Chriss、规则策略、一步成本规则、宏动作规则
+├── bandit/
+│   ├── reward_model.py  奖励模型 μ̂(x,a)、交叉拟合
+│   ├── ope.py           IPW / SNIPW / DR、聚类标准误、上线门槛、截断敏感性
+│   ├── policy_tree.py   DR 分数、深度 1–2 的精确策略树、规则文本
+│   └── thompson.py      线性 Thompson 采样（蒙特卡洛倾向得分）
+├── offline/
+│   ├── behaviour.py     行为策略模型 π̂_β(a|s)
+│   ├── fqi.py           带支撑约束的拟合 Q 迭代、受约束的贪心策略
+│   ├── fqe.py           拟合 Q 评估
+│   └── iql.py           离散 IQL（PyTorch）
+├── online/
+│   └── ppo.py           带屏蔽的 PPO、GAE、蒸馏成决策树
+├── evaluate.py          样本量、设计效应、CUPED、聚类 bootstrap、模拟器真值
+└── train.py             train_bandit / train_fqi / train_iql / train_ppo_run 和命令行
+src/tests/test_execrl.py  9 个测试：屏蔽规则、奖励恒等式、倾向得分、DR 无偏、策略树、各训练函数冒烟
+```
+
+### 13.2 三个统一接口
+
+**策略**：所有策略（日志策略、学到的贪心策略、策略树、PPO）都是同一个签名，所以可以互相替换、用同一套评估：
+
+```text
+policy(x: (n, d) float, mask: (n, K) bool, rng) -> (actions: (n,) int, propensities: (n,) float)
+```
+
+**数据**：
+
+| 容器 | 字段 | 说明 |
 |---|---|---|
+| `BanditLog` | `X (n,d)`、`A (n,)`、`P (n,)`、`R (n,)`、`mask (n,K)`、`group (n,)` | 一行一次决策；`P` 必须是日志里**记录**的倾向得分；`group` 是母单编号 |
+| `Transitions` | `S`、`A`、`R`、`S2`、`done`、`mask`、`mask2`、`prop`、`group`、`step` | 一行一步；`mask2` 是下一状态的允许动作，FQI 的备份要用 |
+
+两者都在构造时校验：长度一致、倾向得分在 $(0,1]$、日志动作在自己的屏蔽集合内。真实日志用 `BanditLog.from_frame(df, feature_cols, ...)` 从表格构造，列名作为参数传入。
+
+**配置**：`ExperimentConfig` 由 `SliceConfig`、`LoggingConfig`、`BanditConfig`、`FQIConfig`、`IQLConfig`、`PPOConfig`、`ComputeConfig` 组成。JSON 可以只写要改的字段，其余用默认值：
+
+```bash
+PYTHONPATH=src python -m execrl.train fqi --config '{"fqi": {"support_tau": 0.02}, "compute": {"threads": 8}}'
+```
+
+### 13.3 模块和本页小节的对应
+
+| 文件 | 本页小节 | 主要对象 |
+|---|---|---|
+| [`actions.py`](../../src/execrl/actions.py) | 2.3、6.1 | `Action`、`action_mask`、`MacroAction`、`macro_mask` |
+| [`reward.py`](../../src/execrl/reward.py) | 2.4、6.1 | `slice_cost_bp`、`step_reward`、`potential`、`shaped`、`macro_reward_bp` |
+| [`logging_policy.py`](../../src/execrl/logging_policy.py) | 5 | `epsilon_rule` |
+| [`bandit/reward_model.py`](../../src/execrl/bandit/reward_model.py) | 6.2 | `fit_reward_model`、`cross_fit` |
+| [`bandit/ope.py`](../../src/execrl/bandit/ope.py) | 6.3 | `evaluate`、`gate`、`cluster_se`、`clip_sensitivity` |
+| [`bandit/policy_tree.py`](../../src/execrl/bandit/policy_tree.py) | 6.4 | `dr_scores`、`PolicyTree` |
+| [`bandit/thompson.py`](../../src/execrl/bandit/thompson.py) | 6.5 | `LinearThompson` |
+| [`offline/fqi.py`](../../src/execrl/offline/fqi.py) | 7.1 | `constrained_fqi`、`constrained_greedy` |
+| [`offline/iql.py`](../../src/execrl/offline/iql.py) | 7.2 | `DiscreteIQL` |
+| [`offline/fqe.py`](../../src/execrl/offline/fqe.py) | 7.4 | `fqe` |
+| [`online/ppo.py`](../../src/execrl/online/ppo.py) | 8 | `ActorCritic`、`gae`、`train_ppo`、`distill_tree` |
+| [`baselines.py`](../../src/execrl/baselines.py) | 9 | `almgren_chriss_trajectory`、`slice_rule`、`one_step_rule` |
+| [`simulator.py`](../../src/execrl/simulator.py) | 10（玩具版） | `SliceEnv`、`rollout`、`macro_bandit_log` |
+| [`evaluate.py`](../../src/execrl/evaluate.py) | 11 | `sample_size`、`cuped`、`cluster_bootstrap` |
+| [`compute.py`](../../src/execrl/compute.py) | 14 | `detect_cpu`、`recommended_threads`、`bench_lightgbm` |
+
+### 13.4 训练函数怎么写
+
+[`train.py`](../../src/execrl/train.py) 里每种方法一个函数，步骤完全一样：
+
+1. **数据**：传入 `BanditLog` / `Transitions`；不传时在玩具模拟器里用随机化日志策略生成。
+2. **切分**：`split_by_group` 按母单切分训练和测试，同一母单的决策不会同时出现在两边。真实数据改用 `split_by_time`（按天滚动）。
+3. **拟合**：调用对应模块。bandit 的奖励模型用交叉拟合，DR 用的 $\hat\mu$ 不能见过被评估的那一行。
+4. **评估**：测试集上的离线估计（bandit 用 DR 和上线门槛，离线 RL 用 FQE）；如果数据来自模拟器，再加模拟器真值。真实数据没有真值，对应的是影子运行。
+5. **保存**：`out_dir` 下写 `config.json`、`metrics.json`、模型文件，bandit 和 PPO 还写 `rules.txt`（策略树的 if/else 文本）。
+
+新增一种方法就照抄其中一个函数，改第 3 步。在 Python 里直接调用（在仓库根目录运行；样本量调小以便快速试跑）：
+
+```python
+import sys
+sys.path.insert(0, "src")                       # run from the repository root
+
+from execrl.config import ExperimentConfig
+from execrl.train import train_bandit
+
+cfg = ExperimentConfig()
+cfg.bandit.n_samples = 8_000                    # small run; the default is 40_000
+cfg.bandit.lgbm.n_estimators = 100
+out = train_bandit(cfg, out_dir=None, log=lambda *a: None)
+m = out["metrics"]
+print("logging DR", round(m["logging"]["dr"], 3), "| greedy DR", round(m["greedy"]["dr"], 3),
+      "+/-", round(m["greedy"]["dr_se"], 3), "| gate", m["greedy_gate"]["pass"])
+print("simulator truth:", {k: round(v, 3) for k, v in m["truth"].items()})
+```
+
+### 13.5 命令行
+
+```bash
+PYTHONPATH=src python -m pytest -q src/tests/test_execrl.py        # about 25 s
+PYTHONPATH=src python -m execrl.compute --bench                    # cores, threads, LightGBM timing
+PYTHONPATH=src python -m execrl.train bandit --out runs/bandit
+PYTHONPATH=src python -m execrl.train fqi    --out runs/fqi
+PYTHONPATH=src python -m execrl.train iql    --out runs/iql --steps 20000
+PYTHONPATH=src python -m execrl.train ppo    --out runs/ppo --iterations 200
+PYTHONPATH=src python -m execrl.train all    --out runs/all --threads 8
+```
+
+### 13.6 玩具模拟器上的结果
+
+玩具模拟器的设定见 [`simulator.py`](../../src/execrl/simulator.py) 开头：买 10 手、10 个决策步，中间价按潜在漂移随机游走，智能体看到带噪声的涨跌概率，挂单在价格下跌时更容易成交（逆向选择）。**它只用来检验代码，不代表真实市场。** 下表是默认配置的结果（单位：基点，越接近 0 越好；真值来自模拟器里 1 万个切片的平均）：
+
+| 策略 | 切片收益（真值） | 离线估计 | 说明 |
+|---|---|---|---|
+| 日志策略（规则 + 10% 探索） | −1.96 | — | 生成训练数据的策略 |
+| 规则（挂买一，落后就吃） | −1.97 | FQE −1.97 | |
+| 一步成本规则（看信号决定吃还是挂） | −1.60 | — | 监督信号 + 一步决策，非 RL 基线 |
+| 约束 FQI（$\varsigma=0.01$） | −1.33 | FQE −1.25 | 6000 个日志切片，10 次迭代 |
+| 约束 FQI（$\varsigma=0.1$） | −2.01 | FQE −1.92 | 支撑太窄，只能复制规则 |
+| 离散 IQL（5000 步） | −1.76 | FQE −1.19 | FQE 对它过于乐观 |
+| PPO（60 次迭代，模拟器内在线学习） | −0.92 | — | 能无限试错，所以最好 |
+| PPO 蒸馏成深度 4 的树 | −0.96 | — | 几乎不损失 |
+
+宏动作 bandit 的奖励以决策时刻的中间价为参考，和上表不是同一个量，单独列出：
+
+| 宏动作策略 | DR 估计 | 模拟器真值 |
+|---|---|---|
+| 日志策略 | −6.18 ± 0.06（在线均值） | −6.35 |
+| GBDT 贪心 | −4.56 ± 0.23 | −4.77 |
+| 深度 2 策略树 | −4.51 ± 0.23 | −4.77 |
+
+上线门槛（新策略减日志策略的 DR 差，95% 单侧下界）为 +1.25，通过。策略树学到的规则是：
+
+```text
+if sig_up <= 0.3763:
+    if band_pos <= 0.1:   -> take_now        (behind schedule)
+    else:                 -> join_hold5
+else:
+    if sig_dn <= 0.2393:  -> take_now        (price likely to rise)
+    else:                 -> join_hold2
+```
+
+几点读法：
+
+- DR 估计落在真值的约一个标准误以内，而且对权重截断阈值 $M$ 不敏感：$M$ 从 5 到不截断，估计在 −4.56 到 −4.62 之间，标准误从 0.06 增到 0.38。IPW 则很敏感：$M=5$ 时 −1.1，不截断时 −4.4。截断让 IPW 严重有偏，不截断又方差大，这正是推荐 DR 的原因。结果里的 `clip_sensitivity` 就是 6.7 节说的「看估计随 $M$ 的变化」。
+- FQE 对 FQI 的估计接近真值，对 IQL 偏乐观 0.6 bp：离线评估必须和模拟器、影子运行一起看。
+- PPO 在玩具环境里最好，是因为它能无限次试错，而且环境就是真值；在有偏的模拟器里，这个优势会变成过拟合模拟器。所以 PPO 只做研究对照，见第 8 节。
+
+### 13.7 接真实数据要做的事
+
+1. **日志**：每次决策记录 `X`（决策时刻可得的特征）、选中的动作、**倾向得分**、允许动作的屏蔽、母单编号、决策时刻的中间价，以及持有期结束后算出的奖励。字段和 `BanditLog` 一一对应。
+2. **模拟器**：用 queue-reactive 加 Hawkes 的订单流（[`event-arrivals.md`](event-arrivals.md) 第 10.4 节）替换 `SliceEnv`，保持 `reset() -> (obs, mask)`、`step(a) -> (obs, r, done, mask, info)` 的接口，`info` 里给出 `fill_v` 和 `fill_vp`。其余代码不用改。
+3. **切分**：用 `split_by_time` 按天滚动，不要随机切分。
+4. **特征**：`simulator.OBS_NAMES` 只有 8 个玩具特征；真实特征按第 2.2 节，名称表传给 `PolicyTree.rules` 以生成可读规则。
+
+### 13.8 扩展点（给后续修改的说明）
+
+- **加一个宏动作**：在 `actions.DEFAULT_MACROS` 里加一个 `MacroAction`，必要时在 `macro_mask` 里写它的允许条件。bandit 的其余部分按 `len(DEFAULT_MACROS)` 自动适配。
+- **加一个原子动作**：改 `Action`、`action_mask`，以及 `SliceEnv.step` 里的执行逻辑。
+- **换奖励**：只改 `reward.py`，并在 `src/tests/test_execrl.py` 里保留「逐步奖励之和等于负的切片成本」这条测试。
+- **加一种算法**：在 `bandit/`、`offline/` 或 `online/` 新建模块，在 `train.py` 里按 13.4 节的五步写 `train_xxx`，在命令行的 `choices` 里登记，并加一个冒烟测试。
+- **并行**：LightGBM 和 PyTorch 的线程数由 `ComputeConfig.threads` 控制（0 表示自动取性能核数）；多个独立实验用进程池并行，每个进程 1 个线程。
+
+## 14. 算力（12 代 i9，没有 GPU）
+
+**先确认 CPU。** 12 代 i9 都是「性能核 + 能效核」的混合架构，没有 12 核的型号：
+
+| 型号 | 性能核（P，带超线程） | 能效核（E） | 线程 |
+|---|---|---|---|
+| i9-12900K / KF / KS / 12900 / F / T | 8 | 8 | 24 |
+| i9-12900HX / 12950HX（笔记本） | 8 | 8 | 24 |
+| i9-12900H / HK（笔记本） | 6 | 8 | 20 |
+
+Linux 上用 `lscpu`，Windows 上看任务管理器的「性能」页；`PYTHONPATH=src python -m execrl.compute` 会打印检测结果。
+
+**线程怎么设**（[`compute.py`](../../src/execrl/compute.py)）：
+
+| 任务 | 设置 | 原因 |
+|---|---|---|
+| 单个 LightGBM / PyTorch 训练 | 线程数 = 性能核数（8） | 工作量平均分给各线程，慢的能效核会拖住整体 |
+| 多个独立任务（调参、多股票、多种子） | 进程数 = 物理核数（16），每个进程 1 线程 | 互不等待，能效核也能用满 |
+| 线上推理（单次决策） | 1–2 线程 | 单次计算很小，多线程的调度开销反而更大 |
+| 总原则 | 进程数 × 每进程线程数 ≤ 物理核数 | 超订会显著变慢；进程池里设 `OMP_NUM_THREADS=1` |
+
+用 `PYTHONPATH=src python -m execrl.compute --bench` 在自己的机器上测一次 LightGBM 在 1、4、8、16、24 线程下的耗时，选最快的写进配置。
+
+**耗时**：下表前四行是在本仓库的 4 核云端容器（Xeon 2.8 GHz）上实测的默认配置；12 代 i9 的单核更快、核更多，预计更短。后几行是估计，未实测。
+
+| 组件 | 规模 | 耗时 |
+|---|---|---|
+| bandit：生成数据、交叉拟合、DR、策略树、模拟器真值 | 4 万次决策 | 14 秒（实测） |
+| 约束 FQI：行为模型、10 次迭代、两次 FQE、模拟器真值 | 6000 个切片，6 万条转移 | 41 秒（实测） |
+| 离散 IQL | 4.2 万条转移，5000 步 | 约 1.5 分钟（实测，含评估） |
+| PPO + 蒸馏 | 256 个向量化环境 × 60 次迭代 | 26 秒（实测） |
 | Bandit 奖励模型 + DR 评估 | $10^6$–$10^7$ 次决策 | 几分钟 |
 | 约束 FQI（LightGBM，$N$ 次迭代） | $10^6$ 条转移，$N \le 60$ | 十几分钟到 1 小时 |
 | IQL / CQL（2 层 MLP） | $10^6$ 条转移，$10^5$–$10^6$ 步 | 1–3 小时 |
-| PPO（小 MLP，快速模拟器，8–16 进程） | $10^7$ 步 | 几小时，瓶颈在模拟器 |
+| PPO（真实感的模拟器，8–16 个进程） | $10^7$ 步 | 几小时，瓶颈在模拟器 |
 | ABIDES（多主体，Python） | 每个 episode 模拟全天 | 很慢，只适合评估 |
 | JAX-LOB、生成式 LOB 模型 | — | 需要 GPU，不考虑 |
 

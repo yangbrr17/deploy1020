@@ -7,7 +7,7 @@
 
 只写通用的技术思路，不涉及任何机构、业务和数据。
 
-网页版由 GitHub Pages 发布（`site/build.py` 把这些 Markdown 转成网页，推送后自动部署）。公式用 LaTeX 书写（`$...$` 和 `$$...$$`），网页上用 KaTeX 渲染；每个代码块和公式都有复制按钮。文档里的 Python 代码都在本地跑通过。
+网页版由 GitHub Pages 发布（`site/build.py` 把这些 Markdown 转成网页，推送后自动部署）。公式用 LaTeX 书写（`$...$` 和 `$$...$$`），网页上用 KaTeX 渲染；每个代码块和公式都有复制按钮。文档里的 Python 代码都在本地跑通过；`src/` 下的代码包有测试，网页上每个 `.py` 文件都有源码页。
 
 ## 目录
 
@@ -17,12 +17,23 @@
 |---|---|
 | [`docs/signal-model/modeling-guide.md`](docs/signal-model/modeling-guide.md) | **总览**：问题定义、截面还是时序、输入和输出、ML / DL / RL 三条路线、pipeline、训练指标、先做什么 |
 | [`docs/signal-model/features-and-targets.md`](docs/signal-model/features-and-targets.md) | 输入变量全表（公式、直觉、经济含义）、经济学概念、跨股票标准化、预测目标对比 |
-| [`docs/signal-model/event-arrivals.md`](docs/signal-model/event-arrivals.md) | 订单 / 成交 / 中间价变动的到达分布：泊松、ACD、Hawkes、queue-reactive、队列耗尽时间；检验方法；怎么当特征、基线和模拟器 |
+| [`docs/signal-model/event-arrivals.md`](docs/signal-model/event-arrivals.md) | 订单 / 成交 / 中间价变动的到达分布：泊松、ACD、Hawkes、queue-reactive、队列耗尽时间；检验方法；怎么当特征、基线和模拟器；调研路线；全部公式的 LaTeX 源码 |
+| [`docs/signal-model/arrival-tests.md`](docs/signal-model/arrival-tests.md) | **可直接执行的检验方案**：需要的数据字段、H1–H9 每个假设对应的分布、检验统计量、判定阈值、结果表、执行步骤（代码在 [`src/arrivals/`](src/README.md)） |
 | [`docs/signal-model/ml-pipeline.md`](docs/signal-model/ml-pipeline.md) | 机器学习路线：逻辑回归 → GBDT → 生存模型；完整 pipeline；指标；LightGBM 超参起点 |
 | [`docs/signal-model/deep-learning.md`](docs/signal-model/deep-learning.md) | 深度学习总览：精选模型对比、通用设计、训练指标、和 GBDT 比较、i9 CPU 上的训练和推理 |
 | [`docs/signal-model/dl/`](docs/signal-model/dl/ofi-tcn-gru.md) | 每个模型一页：[DeepLOB](docs/signal-model/dl/deeplob.md)、[BiN-CTABL](docs/signal-model/dl/bin-ctabl.md)、[Deep OFI](docs/signal-model/dl/deep-ofi.md)、[TLOB](docs/signal-model/dl/tlob.md)、[推荐的 OFI-TCN-GRU](docs/signal-model/dl/ofi-tcn-gru.md)：数学、逐层结构、参数怎么选、怎么分析、可运行代码 |
-| [`docs/signal-model/reinforcement-learning.md`](docs/signal-model/reinforcement-learning.md) | 强化学习：MDP、奖励和价值函数、十类方法比较、推荐方案（bandit + DR）的完整算法、模拟器、样本量 |
+| [`docs/signal-model/reinforcement-learning.md`](docs/signal-model/reinforcement-learning.md) | 强化学习：MDP、奖励和价值函数、十类方法比较、推荐方案（bandit + DR）的完整算法、模拟器、样本量；第 13 节是模块化代码（[`src/execrl/`](src/README.md)）的结构、训练函数和玩具模拟器上的结果 |
 | [`docs/signal-model/execution-signal-plan.md`](docs/signal-model/execution-signal-plan.md) | 信号在执行里怎么用：阈值、进度带、评估、分步计划 |
+
+**代码**（[`src/README.md`](src/README.md)）
+
+| 包 | 内容 |
+|---|---|
+| [`src/arrivals/`](src/arrivals/__init__.py) | 到达分布检验 H1–H9：清洗、统计量、ACD、Hawkes、Cont–de Larrard、结果表和命令行 |
+| [`src/execrl/`](src/execrl/__init__.py) | 执行决策：配置、动作和屏蔽、奖励、数据容器、玩具模拟器、bandit + DR、约束 FQI、FQE、IQL、PPO、训练函数和命令行 |
+| [`src/tests/`](src/tests/test_execrl.py) | 16 个 pytest 测试：`PYTHONPATH=src python -m pytest -q src/tests` |
+
+接手修改前先读 [`.github/copilot-instructions.md`](.github/copilot-instructions.md)：写法约定和按优先级排的待办。
 
 **Agent 平台**
 

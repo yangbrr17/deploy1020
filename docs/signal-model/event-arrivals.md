@@ -1,6 +1,6 @@
 # 事件到达模型：下一笔什么时候来
 
-2026-10 调研整理。问题是：下一笔订单 / 成交 / 中间价变动在什么时候到达，应该假设什么分布。本页给出经济学和金融计量里成熟的几条路线（泊松、ACD、Hawkes、排队模型）的数学、估计方法、检验方法，以及怎么接进我们的 hazard 模型。总览见 [`modeling-guide.md`](modeling-guide.md)，hazard 模型本身见 [`ml-pipeline.md`](ml-pipeline.md) 第 1.5 节。
+2026-10 调研整理。问题是：下一笔订单 / 成交 / 中间价变动在什么时候到达，应该假设什么分布。本页给出经济学和金融计量里成熟的几条路线（泊松、ACD、Hawkes、排队模型）的数学、估计方法、检验方法，以及怎么接进我们的 hazard 模型。总览见 [`modeling-guide.md`](modeling-guide.md)，hazard 模型本身见 [`ml-pipeline.md`](ml-pipeline.md) 第 1.5 节。**拿到数据后怎么逐项检验（要什么字段、每个假设对应哪个分布、用什么统计量、怎么判定）见 [`arrival-tests.md`](arrival-tests.md)，代码在 [`src/arrivals/`](../../src/arrivals/__init__.py)。** 调研的阅读顺序见第 13 节，本页全部公式的 LaTeX 源码见第 14 节。
 
 ## 结论
 
@@ -533,6 +533,8 @@ e_i=\Lambda(t_{i-1},t_i)=\int_{t_{i-1}}^{t_i}\lambda(u)\,du\ \overset{\text{iid}
 - 开盘、收盘、午休要截断或单独建模。
 - 拟合 Hawkes 前先去掉日内季节性，否则 $n$ 会被高估。
 
+在真实数据上的完整检验流程（H1–H9、判定阈值、结果表）见 [`arrival-tests.md`](arrival-tests.md)。
+
 ```python
 def ljung_box(z, lags=20):
     z = np.asarray(z) - np.mean(z)
@@ -712,9 +714,109 @@ print("  features at t=1.5:", np.round(dc.value(1.5), 3))
 | 衰减计数特征 | 每个事件 | $O(M K)$ 次乘加，微秒级 |
 | $\Pr(\tau>t\mid x,y)$、$\phi(n,p)$ | 每次查询 | 数值积分约毫秒级；线上应在 $(x,y)$ 网格上**预先算表**再查表 |
 
-全部不需要 GPU。现成工具：Python 的 `tick`（BSD-3，Hawkes 估计与模拟）、R 的 `ACDm`（GPL，各类 ACD）。Python 里没有维护中的主流 ACD 包，用上面的代码即可。
+全部不需要 GPU。12 代 i9（例如 12900K：8 个性能核 + 8 个能效核，24 线程）上，这些计算基本都是单线程的；按「股票 × 日」拆成独立任务，开 8–16 个进程并行（每个进程设 `OMP_NUM_THREADS=1`）最划算。现成工具：Python 的 `tick`（BSD-3，Hawkes 估计与模拟）、R 的 `ACDm`（GPL，各类 ACD）。Python 里没有维护中的主流 ACD 包，用上面的代码即可。
 
-## 13. 参考文献
+## 13. 调研路线：读什么、按什么顺序、每一步带走什么
+
+按下面的顺序走，每一步都有「读」「带走」「在我们数据上验证」三项。验证项对应 [`arrival-tests.md`](arrival-tests.md) 的假设编号，所以读完就能动手。
+
+| 步骤 | 读 | 带走什么 | 在我们数据上验证 |
+|---|---|---|---|
+| 1. 建立事实（半天） | Bouchaud、Bonart、Donier、Gould (2018) *Trades, Quotes and Prices* 中订单流与 tick 大小的章节；Hautsch (2012) *Econometrics of Financial High-Frequency Data* 中描述间隔特征的章节 | 间隔的过度离散、聚集、日内 U 形；大 tick 与小 tick 的区别 | H1、H2：CV、Fano 曲线、季节曲线 |
+| 2. ACD（1 天） | Engle、Russell (1998)；Bauwens、Giot (2000)；Grammig、Maurer (2000)；Bauwens、Hautsch (2009) 的综述 | 第 4 节的模型和似然；季节调整的做法；误差分布怎么选 | H3、H4：WACD 持久性、残差检验、误差分布 |
+| 3. Hawkes（1 天） | Bacry、Mastromatteo、Muzy (2015) 的综述；Filimonov、Sornette (2012, 2015)；Hardiman 等 (2013)；Lallouache、Challet (2016) | 第 5 节的似然和递推；分支比争议的来龙去脉；什么情况会把 $n$ 估高 | H5、H9：分支比、核形状、跨日稳定性 |
+| 4. 排队模型（1 天） | Cont、Stoikov、Talreja (2010)；Cont、de Larrard (2013)；Huang、Lehalle、Rosenbaum (2015)；Gould、Bonart (2016) | 第 6–7 节的首达时间、$\phi(n,p)$、状态依赖强度 | H6、H7、H8 |
+| 5. 跑检验（半天） | [`arrival-tests.md`](arrival-tests.md) 第 14 节 | 结果表和汇总 | 全部 |
+| 6. 写结论（半天） | — | 按 [`arrival-tests.md`](arrival-tests.md) 第 13.3 节的决策表，决定 hazard 模型的到达类特征 | 把结论写回本页第 10.2 节 |
+
+每读一篇，记下四件事：**模型的原假设是什么**（哪个分布、哪些独立性假设）、**用什么数据**（市场、tick 大小、时间戳精度、样本期）、**怎么检验**（统计量、是否做了季节调整）、**结论在什么条件下成立**。四项里任何一项和我们的数据不一致，那篇的结论就只能当参考。
+
+## 14. 附录：本页公式的 LaTeX 源码
+
+页面上每个公式块右上角都有「复制 LaTeX」按钮。下面是本页主要公式的完整源码，可以整段粘贴到 Overleaf 编译（需要 `amsmath`、`amssymb`）；检验统计量的源码在 [`arrival-tests.md`](arrival-tests.md) 第 16 节。
+
+```latex
+\documentclass{article}
+\usepackage{amsmath,amssymb}
+\begin{document}
+\section*{Event-arrival models}
+
+\paragraph{Poisson.}
+\[
+\Pr\{N(t+\Delta)-N(t)=k\}=e^{-\lambda\Delta}\frac{(\lambda\Delta)^k}{k!},\qquad
+X_i\overset{\text{iid}}{\sim}\mathrm{Exp}(\lambda),\qquad \mathrm{CV}=1,\qquad \frac{\mathrm{Var}\,N}{\mathbb{E}N}=1 .
+\]
+
+\paragraph{NHPP and Cox.}
+\[
+\ell=\sum_i\log\lambda(t_i)-\int_0^T\lambda(u)\,du,\qquad
+\mathrm{Var}\,N(0,t]=\mathbb{E}\,\Lambda(t)+\mathrm{Var}\,\Lambda(t)\ \ge\ \mathbb{E}\,N(0,t].
+\]
+
+\paragraph{ACD (Engle--Russell 1998).}
+\[
+x_i=\psi_i\varepsilon_i,\quad \mathbb{E}\varepsilon_i=1,\quad
+\psi_i=\omega+\alpha x_{i-1}+\beta\psi_{i-1},\quad
+\lambda(t\mid\mathcal{F}_t)=\frac{1}{\psi_{N(t)+1}}\,h_\varepsilon\!\Big(\frac{t-t_{N(t)}}{\psi_{N(t)+1}}\Big),
+\]
+\[
+\ell_{\text{EACD}}=-\sum_i\Big[\log\psi_i+\frac{x_i}{\psi_i}\Big],\qquad
+\ell_{\text{WACD}}=\sum_i\Big[\log k-\log x_i+k\log\frac{g x_i}{\psi_i}-\Big(\frac{g x_i}{\psi_i}\Big)^k\Big],\quad g=\Gamma(1+1/k),
+\]
+\[
+\log\psi_i=\omega+\beta\log\psi_{i-1}+\alpha\,g(\varepsilon_{i-1})+\gamma^\top z_{i-1}\quad\text{(Log-ACD)}.
+\]
+
+\paragraph{Hawkes.}
+\[
+\lambda(t)=\mu+\sum_{t_i<t}\phi(t-t_i),\qquad \phi(t)=\alpha e^{-\beta t},\qquad n=\|\phi\|_1=\frac{\alpha}{\beta}<1,\qquad \bar\lambda=\frac{\mu}{1-n},
+\]
+\[
+A_i=e^{-\beta(t_i-t_{i-1})}(1+A_{i-1}),\qquad
+\ell=\sum_{i=1}^N\log(\mu+\alpha A_i)-\mu T-\frac{\alpha}{\beta}\sum_{i=1}^N\big(1-e^{-\beta(T-t_i)}\big),
+\]
+\[
+\Lambda(t_{i-1},t_i)=\mu\Delta_i+\frac{\alpha}{\beta}(1+A_{i-1})\big(1-e^{-\beta\Delta_i}\big),\qquad
+\lambda_m(t)=\mu_m+\sum_{l=1}^M\sum_{t^l_j<t}\phi_{ml}(t-t^l_j).
+\]
+
+\paragraph{Queue-reactive.}
+\[
+\hat\Lambda(n)=\big(\overline{\Delta t\mid q=n}\big)^{-1},\qquad
+\hat\lambda^{L}(n)=\hat\Lambda(n)\cdot\frac{\#\{\text{add},\,q=n\}}{\#\{q=n\}} .
+\]
+
+\paragraph{Cont--de Larrard.}
+\[
+\mathbb{E}\big[e^{-s\sigma}\mid q_0=x\big]=\Big(\frac{(\lambda+c+s)-\sqrt{(\lambda+c+s)^2-4\lambda c}}{2\lambda}\Big)^x,\qquad
+f_\sigma(t\mid x)=\frac{x}{t}\Big(\frac{c}{\lambda}\Big)^{x/2}I_x\big(2\sqrt{\lambda c}\,t\big)e^{-(\lambda+c)t},
+\]
+\[
+\Pr(\tau>t\mid x,y)=\Pr(\sigma^a>t\mid x)\Pr(\sigma^b>t\mid y),\qquad
+\lambda=c:\ \Pr(\tau>t\mid x,y)\sim\frac{xy}{\pi\lambda}\,t^{-1},
+\]
+\[
+\lambda<c:\ \Pr(\sigma>t)\propto t^{-3/2}e^{-(\sqrt c-\sqrt\lambda)^2t},\qquad \mathbb{E}\sigma=\frac{x}{c-\lambda},
+\]
+\[
+\phi(n,p)=\frac1\pi\int_0^\pi\Big(2-\cos t-\sqrt{(2-\cos t)^2-1}\Big)^p\frac{\sin(nt)\cos(t/2)}{\sin(t/2)}\,dt .
+\]
+
+\paragraph{Time rescaling.}
+\[
+e_i=\int_{t_{i-1}}^{t_i}\lambda(u)\,du\overset{\text{iid}}{\sim}\mathrm{Exp}(1),\qquad
+Q=n(n+2)\sum_{h=1}^H\frac{\hat\rho_h^2}{n-h},\qquad z=\sqrt{n/8}\,(\hat\sigma_e^2-1).
+\]
+
+\paragraph{Discrete-time competing-risk hazard.}
+\[
+h_k(j)=\frac{\lambda_k}{\lambda_\uparrow+\lambda_\downarrow}\Big(1-e^{-(\lambda_\uparrow+\lambda_\downarrow)\Delta_j}\Big),\qquad
+\Pr(\text{up in bin } j)=h_\uparrow(j)\prod_{i<j}\big(1-h_\uparrow(i)-h_\downarrow(i)\big).
+\]
+\end{document}
+```
+
+## 15. 参考文献
 
 - Hawkes, A. G. (1971). Spectra of some self-exciting and mutually exciting point processes. *Biometrika* 58(1):83–90.
 - Clark, P. K. (1973). A subordinated stochastic process model with finite variance for speculative prices. *Econometrica* 41(1):135–155.
@@ -734,6 +836,7 @@ print("  features at t=1.5:", np.round(dc.value(1.5), 3))
 - Bacry, E., Dayri, K., Muzy, J.-F. (2012). Non-parametric kernel estimation for symmetric Hawkes processes. *Eur. Phys. J. B* 85:157.
 - Filimonov, V., Sornette, D. (2012). Quantifying reflexivity in financial markets. *Phys. Rev. E* 85:056108.
 - Cont, R., de Larrard, A. (2012). Order book dynamics in liquid markets: limit theorems and diffusion approximations. arXiv:1202.6412.
+- Hautsch, N. (2012). *Econometrics of Financial High-Frequency Data*. Springer.
 - Cont, R., de Larrard, A. (2013). Price dynamics in a Markovian limit order market. *SIAM J. Financial Math.* 4(1):1–25. arXiv:1104.4596.
 - Bacry, E., Delattre, S., Hoffmann, M., Muzy, J.-F. (2013). Modelling microstructure noise with mutually exciting point processes. *Quantitative Finance* 13(1):65–77.
 - Hardiman, S. J., Bercot, N., Bouchaud, J.-P. (2013). Critical reflexivity in financial markets: a Hawkes process analysis. *Eur. Phys. J. B* 86:442.
@@ -742,4 +845,6 @@ print("  features at t=1.5:", np.round(dc.value(1.5), 3))
 - Filimonov, V., Sornette, D. (2015). Apparent criticality and calibration issues in the Hawkes self-excited point process model. *Quantitative Finance* 15(8):1293–1314.
 - Bacry, E., Jaisson, T., Muzy, J.-F. (2016). Estimation of slowly decreasing Hawkes kernels: application to high-frequency order book dynamics. *Quantitative Finance* 16(8):1179–1201.
 - Lallouache, M., Challet, D. (2016). The limits of statistical significance of Hawkes processes fitted to financial data. *Quantitative Finance* 16(1):1–11.
+- Gould, M. D., Bonart, J. (2016). Queue imbalance as a one-tick-ahead price predictor in a limit order book. *Market Microstructure and Liquidity* 2(2):1650006.
+- Bouchaud, J.-P., Bonart, J., Donier, J., Gould, M. (2018). *Trades, Quotes and Prices: Financial Markets Under the Microscope*. Cambridge University Press.
 - Morariu-Patrichi, M., Pakkanen, M. S. (2022). State-dependent Hawkes processes and their application to limit order book modelling. *Quantitative Finance* 22(3):563–583.

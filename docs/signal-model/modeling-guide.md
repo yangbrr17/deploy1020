@@ -5,11 +5,12 @@
 | 文档 | 内容 |
 |---|---|
 | [`features-and-targets.md`](features-and-targets.md) | 输入变量全表（公式、直觉、经济含义）、经济学概念、预测目标对比 |
-| [`event-arrivals.md`](event-arrivals.md) | 事件到达的分布：泊松为什么不够、ACD、Hawkes、排队模型、下一次中间价变动的时间、怎么接进 hazard |
+| [`event-arrivals.md`](event-arrivals.md) | 事件到达的分布：泊松为什么不够、ACD、Hawkes、排队模型、下一次中间价变动的时间、怎么接进 hazard、调研路线 |
+| ↳ [`arrival-tests.md`](arrival-tests.md) | 拿到数据后的检验方案：数据字段、H1–H9 各对应哪个分布、统计量、判定、结果表，代码在 `src/arrivals/` |
 | [`ml-pipeline.md`](ml-pipeline.md) | 机器学习路线：逻辑回归 → GBDT → 生存模型；完整 pipeline；指标；超参起点 |
 | [`deep-learning.md`](deep-learning.md) | 深度学习总览：精选模型对比、通用设计、训练指标、和 GBDT 比较、i9 上的训练和推理 |
 | ↳ [DeepLOB](dl/deeplob.md) · [BiN-CTABL](dl/bin-ctabl.md) · [Deep OFI](dl/deep-ofi.md) · [TLOB](dl/tlob.md) · [**OFI-TCN-GRU（推荐）**](dl/ofi-tcn-gru.md) | 每个模型：创新点、数学、逐层结构和参数量、参数怎么选、结果怎么分析、可运行代码 |
-| [`reinforcement-learning.md`](reinforcement-learning.md) | 强化学习：MDP、奖励和价值函数、十类方法比较、推荐方案（bandit + DR）的完整算法、模拟器、样本量 |
+| [`reinforcement-learning.md`](reinforcement-learning.md) | 强化学习：MDP、奖励和价值函数、十类方法比较、推荐方案（bandit + DR）的完整算法、模拟器、样本量、模块化代码 `src/execrl/` |
 | [`execution-signal-plan.md`](execution-signal-plan.md) | 执行层：信号决定什么、进度带规则、评估、分步计划 |
 
 ## 1. 问题是什么
