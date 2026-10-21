@@ -18,6 +18,7 @@
 | `src/execrl/` | 执行决策包（bandit、离线 RL、PPO），入口 `train.py` |
 | `src/tests/` | pytest 测试 |
 | `site/build.py` | 把 Markdown 和 `src/**/*.py` 生成静态站点；GitHub Actions 推送后自动发布到 Pages |
+| `site/encrypt_page.py`、`site/encrypted/` | 需要密码的笔记页：只提交密文 JSON，Markdown 原文和密码都不进仓库 |
 
 ## 常用命令（仓库根目录）
 

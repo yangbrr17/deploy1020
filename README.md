@@ -33,6 +33,8 @@
 | [`src/execrl/`](src/execrl/__init__.py) | 执行决策：配置、动作和屏蔽、奖励、数据容器、玩具模拟器、bandit + DR、约束 FQI、FQE、IQL、PPO、训练函数和命令行 |
 | [`src/tests/`](src/tests/test_execrl.py) | 16 个 pytest 测试：`PYTHONPATH=src python -m pytest -q src/tests` |
 
+「笔记（需密码）」栏目里的页面在浏览器里用密码解密，仓库里只有密文（`site/encrypted/`，生成方法见 `site/encrypt_page.py`）。
+
 接手修改前先读 [`.github/copilot-instructions.md`](.github/copilot-instructions.md)：写法约定和按优先级排的待办。
 
 **Agent 平台**

@@ -4,11 +4,14 @@ python3 site/build.py            # needs: pip install markdown==3.7 pymdown-exte
 
 Math: write $...$ inline and $$...$$ on their own lines; KaTeX renders them in the browser.
 Every code block gets a copy button; every display formula gets a "copy LaTeX" button.
+Password-protected pages: site/encrypted/<slug>.json (made by site/encrypt_page.py from a Markdown file
+that is NOT committed) become notes/<slug>.html; the browser decrypts them with the password.
 Python files under src/ become source pages (foo.py -> foo.py.html) with a table of their top-level
 functions and classes; Markdown links to a .py file are rewritten to that page.
 """
 import ast
 import html
+import json
 import re
 import shutil
 from pathlib import Path
@@ -87,6 +90,10 @@ pre.mermaid{background:var(--panel);text-align:center;margin:1rem 0}
 blockquote{margin:1rem 0;padding:.4rem 1rem;border-left:3px solid var(--accent);background:var(--panel);color:var(--ink)}
 .toggle{position:fixed;top:12px;right:14px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:4px 10px;font-size:13px;cursor:pointer;z-index:5}
 footer{margin-top:3rem;color:var(--muted);font-size:13px}
+.unlock{margin:1.2rem 0;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--panel);max-width:420px}
+.unlock input{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);width:min(100%,240px)}
+.unlock button{font:inherit;padding:6px 14px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:var(--bg);cursor:pointer}
+.muted{color:var(--muted)}
 @media (max-width:860px){
   .layout{display:block}
   nav.side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}
@@ -109,22 +116,26 @@ function copyText(t,btn){
   function fallback(){var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.appendChild(a);a.select();try{document.execCommand('copy');done()}catch(e){}document.body.removeChild(a)}
 }
 function button(label,get){var b=document.createElement('button');b.type='button';b.className='copy';b.textContent=label;b.onclick=function(){copyText(get(),b)};return b}
-document.addEventListener('DOMContentLoaded',function(){
-  var tg=document.querySelector('.toggle');
-  if(tg)tg.onclick=function(){var dark=r.getAttribute('data-theme')==='dark'||(!r.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);var n=dark?'light':'dark';r.setAttribute('data-theme',n);try{localStorage.setItem('theme',n)}catch(e){}location.reload()};
-  document.querySelectorAll('pre > code').forEach(function(c){
+function enhance(root){
+  root.querySelectorAll('pre > code').forEach(function(c){
     var pre=c.parentNode,w=document.createElement('div');w.className='cb';
     var m=(c.className||'').match(/language-([\w+-]+)/);
     pre.parentNode.insertBefore(w,pre);w.appendChild(pre);
     if(m){var l=document.createElement('span');l.className='lang';l.textContent=m[1];w.appendChild(l);w.classList.add('has-lang')}
     w.appendChild(button('复制',function(){return c.textContent}));
   });
-  document.querySelectorAll('div.arithmatex').forEach(function(d){
+  root.querySelectorAll('div.arithmatex').forEach(function(d){
     var src=d.textContent.trim().replace(/^\\\[/,'').replace(/\\\]$/,'').trim();
     d.classList.add('math');d.setAttribute('data-latex',src);
     d.appendChild(button('复制 LaTeX',function(){return src}));
   });
-  if(window.renderMathInElement)renderMathInElement(document.querySelector('main'),{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false,ignoredClasses:['copy']});
+  if(window.renderMathInElement)renderMathInElement(root,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false,ignoredClasses:['copy']});
+}
+window.enhancePage=enhance;
+document.addEventListener('DOMContentLoaded',function(){
+  var tg=document.querySelector('.toggle');
+  if(tg)tg.onclick=function(){var dark=r.getAttribute('data-theme')==='dark'||(!r.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);var n=dark?'light':'dark';r.setAttribute('data-theme',n);try{localStorage.setItem('theme',n)}catch(e){}location.reload()};
+  if(!document.querySelector('.locked'))enhance(document.querySelector('main'));
 });
 })();
 """
@@ -151,7 +162,11 @@ def rel(from_out: str, to_out: str) -> str:
 
 
 def render(src: str) -> tuple[str, str]:
-    text = (ROOT / src).read_text(encoding="utf8")
+    return render_text((ROOT / src).read_text(encoding="utf8"), src)
+
+
+def render_text(text: str, src: str) -> tuple[str, str]:
+    """Markdown -> (title, body HTML). `src` is the page's repo path, used to rewrite relative links."""
     md = markdown.Markdown(extensions=[
         "tables", "toc", "sane_lists",
         "pymdownx.arithmatex", "pymdownx.superfences",
@@ -222,7 +237,89 @@ def nav_html(cur: str) -> str:
             cls = " ".join(c for c in ("sub" if level else "", "on" if src == cur else "") if c)
             cls = f' class="{cls}"' if cls else ""
             parts.append(f'<a{cls} href="{rel(me, out_path(src))}">{label}</a>')
+    locked = encrypted_pages()
+    if locked:
+        parts.append("<h4>笔记（需密码）</h4>")
+        for d in locked:
+            on = ' class="on"' if d["src"] == cur else ""
+            parts.append(f'<a{on} href="{rel(me, out_path(d["src"]))}">{html.escape(d["nav"])}</a>')
     return "\n".join(parts)
+
+
+LOCKED_JS = r"""
+(function(){
+function b64(s){var b=atob(s),u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u}
+async function unlock(pw){
+  var d=window.LOCKED,enc=new TextEncoder();
+  var base=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveKey']);
+  var key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64(d.salt),iterations:d.iter,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['decrypt']);
+  var pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64(d.iv)},key,b64(d.ct));
+  return new TextDecoder().decode(pt);
+}
+document.addEventListener('DOMContentLoaded',function(){
+  var f=document.getElementById('unlock'),msg=document.getElementById('unlock-msg'),box=document.getElementById('content');
+  if(!window.isSecureContext||!crypto.subtle){msg.textContent='需要 https 才能解密。';return}
+  f.onsubmit=function(e){
+    e.preventDefault();msg.textContent='解密中…';
+    unlock(f.pw.value).then(function(h){
+      box.innerHTML=h;f.parentNode.removeChild(f);msg.textContent='';var t=document.getElementById('locked-title');if(t)t.parentNode.removeChild(t);
+      document.querySelector('main').classList.remove('locked');
+      if(window.enhancePage)window.enhancePage(box);
+    },function(){msg.textContent='密码不对，或者页面数据损坏。'});
+  };
+});
+})();
+"""
+
+ENC_DIR = ROOT / "site" / "encrypted"
+
+
+def encrypted_pages() -> list[dict]:
+    """Password-protected pages: site/encrypted/<slug>.json made by site/encrypt_page.py."""
+    out = []
+    for p in sorted(ENC_DIR.glob("*.json")):
+        d = json.loads(p.read_text(encoding="utf8"))
+        d["src"] = f"notes/{p.stem}.md"            # virtual source path -> notes/<slug>.html
+        out.append(d)
+    return out
+
+
+def page_html(src, title, body, has_math, has_mermaid, footer, extra_js=""):
+    math_head = (f'<link rel="stylesheet" href="{KATEX}/katex.min.css">\n'
+                 f'<script defer src="{KATEX}/katex.min.js"></script>\n'
+                 f'<script defer src="{KATEX}/contrib/auto-render.min.js"></script>\n') if has_math else ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{html.escape(title)}</title>
+<style>{CSS}</style>
+<script>{THEME_JS}</script>
+{math_head}<script defer>{PAGE_JS}</script>{extra_js}
+</head>
+<body>
+<button class="toggle" type="button" aria-label="切换深浅色">◐</button>
+<div class="layout">
+<nav class="side">
+{nav_html(src)}
+</nav>
+<main{' class="locked"' if extra_js else ''}>
+{body}
+<footer>{footer}</footer>
+</main>
+</div>
+{MERMAID if has_mermaid else ""}
+</body>
+</html>
+"""
+
+
+def write(src, page):
+    dst = OUT / out_path(src)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(page, encoding="utf8")
 
 
 def build():
@@ -235,43 +332,22 @@ def build():
                         if "__pycache__" not in p.parts))
     for src in sources:
         title, body = render_py(src) if src.endswith(".py") else render(src)
-        has_math = 'class="arithmatex"' in body
-        has_mermaid = 'class="mermaid"' in body
-        math_head = (f'<link rel="stylesheet" href="{KATEX}/katex.min.css">\n'
-                     f'<script defer src="{KATEX}/katex.min.js"></script>\n'
-                     f'<script defer src="{KATEX}/contrib/auto-render.min.js"></script>\n') if has_math else ""
-        page = f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>{html.escape(title)}</title>
-<style>{CSS}</style>
-<script>{THEME_JS}</script>
-{math_head}<script defer>{PAGE_JS}</script>
-</head>
-<body>
-<button class="toggle" type="button" aria-label="切换深浅色">◐</button>
-<div class="layout">
-<nav class="side">
-{nav_html(src)}
-</nav>
-<main>
-{body}
-<footer>源文件：<code>{src}</code></footer>
-</main>
-</div>
-{MERMAID if has_mermaid else ""}
-</body>
-</html>
-"""
-        dst = OUT / out_path(src)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(page, encoding="utf8")
+        write(src, page_html(src, title, body, 'class="arithmatex"' in body, 'class="mermaid"' in body,
+                             f"源文件：<code>{src}</code>"))
+    locked = encrypted_pages()
+    for d in locked:
+        payload = json.dumps({k: d[k] for k in ("salt", "iv", "iter", "ct")})
+        body = (f"<h1 id=\"locked-title\">{html.escape(d['title'])}</h1>\n"
+                '<form id="unlock" class="unlock"><p>这一页需要密码。</p>'
+                '<input name="pw" type="password" autocomplete="current-password" placeholder="密码" aria-label="密码"> '
+                '<button type="submit">打开</button></form>\n'
+                '<p id="unlock-msg" class="muted"></p>\n<div id="content"></div>')
+        extra = f"\n<script>window.LOCKED={payload};</script>\n<script>{LOCKED_JS}</script>"
+        write(d["src"], page_html(d["src"], d["title"], body, True, False,
+                                  "内容在浏览器里用密码解密（AES-GCM，PBKDF2-SHA256）", extra))
     (OUT / ".nojekyll").write_text("")
     (OUT / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
-    print(f"built {len(sources)} pages into {OUT}")
+    print(f"built {len(sources) + len(locked)} pages into {OUT} ({len(locked)} password-protected)")
 
 
 if __name__ == "__main__":
