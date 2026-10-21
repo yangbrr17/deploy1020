@@ -15,7 +15,9 @@ a short password only slows a determined attacker down. Needs `pip install crypt
 import argparse
 import base64
 import getpass
+import html
 import json
+import re
 import os
 import sys
 from pathlib import Path
@@ -54,7 +56,13 @@ def main():
                     " the page's own heading stays inside the encrypted part")
     a = ap.parse_args()
     pw = os.environ.get("PAGE_PASSWORD") or getpass.getpass("password: ")
-    _, body = build.render_text(Path(a.source).read_text(encoding="utf8"), f"notes/{a.slug}.md")
+    text = Path(a.source).read_text(encoding="utf8")
+    _, body = build.render_text(text, f"notes/{a.slug}.md")
+    # A stray "<" inside display math can be parsed as an HTML tag and swallow the rest of the page:
+    # make sure every "## " heading of the source made it into the HTML.
+    lost = [h for h in re.findall(r"^## (.+)$", text, re.M) if html.escape(h.strip(), quote=False) not in body]
+    if lost:
+        sys.exit(f"these sections did not render (write '<' as \\lt in math): {lost}")
     d = {"title": a.title or f"{a.slug} · 笔记", "nav": a.nav or a.slug, **encrypt(body, pw)}
     assert decrypt(d, pw) == body
     out = build.ENC_DIR / f"{a.slug}.json"
