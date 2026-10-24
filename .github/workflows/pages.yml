@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install markdown==3.7 pymdown-extensions==10.12
+      - run: pip install markdown==3.7 pymdown-extensions==10.12 numpy
       - run: python site/build.py
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -25,13 +25,18 @@
 | [`docs/signal-model/reinforcement-learning.md`](docs/signal-model/reinforcement-learning.md) | 强化学习：MDP、奖励和价值函数、十类方法比较、推荐方案（bandit + DR）的完整算法、模拟器、样本量；第 13 节是模块化代码（[`src/execrl/`](src/README.md)）的结构、训练函数和玩具模拟器上的结果 |
 | [`docs/signal-model/execution-signal-plan.md`](docs/signal-model/execution-signal-plan.md) | 信号在执行里怎么用：阈值、进度带、评估、分步计划 |
 
+**交付报告主题**（[`docs/report-theme/README.md`](docs/report-theme/README.md)）
+
+内部报告的统一格式：单个 HTML 文件，结论先行，指标卡、编号章节、交互图表，能打印成 A4。网页上有[示例报告](report/example.html)和空白模板；代码在 [`src/reportkit/`](src/reportkit/__init__.py)。
+
 **代码**（[`src/README.md`](src/README.md)）
 
 | 包 | 内容 |
 |---|---|
 | [`src/arrivals/`](src/arrivals/__init__.py) | 到达分布检验 H1–H9：清洗、统计量、ACD、Hawkes、Cont–de Larrard、结果表和命令行 |
 | [`src/execrl/`](src/execrl/__init__.py) | 执行决策：配置、动作和屏蔽、奖励、数据容器、玩具模拟器、bandit + DR、约束 FQI、FQE、IQL、PPO、训练函数和命令行 |
-| [`src/tests/`](src/tests/test_execrl.py) | 16 个 pytest 测试：`PYTHONPATH=src python -m pytest -q src/tests` |
+| [`src/reportkit/`](src/reportkit/__init__.py) | 交付报告主题：`Report`、图表 spec、主题 CSS / JS、空白模板 |
+| [`src/tests/`](src/tests/test_execrl.py) | 25 个 pytest 测试：`PYTHONPATH=src python -m pytest -q src/tests` |
 
 「笔记（需密码）」栏目里的页面在浏览器里用密码解密，仓库里只有密文（`site/encrypted/`，生成方法见 `site/encrypt_page.py`）。
 

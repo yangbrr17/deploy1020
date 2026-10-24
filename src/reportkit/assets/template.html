@@ -1,0 +1,179 @@
+<!doctype html>
+<!--
+  reportkit 空白模板（手写 HTML 路线，不需要 Python）。
+  用法：复制本文件，替换「」里的占位内容，删掉用不到的组件。
+  交付前把样式和脚本内联成单个文件：python -m reportkit inline 我的报告.html 交付.html
+  规则（详见 docs/report-theme/README.md）：
+    - 顺序固定：抬头 -> 结论 -> 关键指标 -> 编号章节 -> 下一步 -> 附录 -> 版本记录
+    - 标题写结论，不写主题；每个数字带口径（样本、区间、条件）
+    - 章节、图、表的编号手写，并和正文引用一致；h2 / h3 必须有 id（目录靠它生成）
+    - 图表写成 JSON spec（<script type="application/json">），由 theme.js 画；不要贴截图
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>「报告标题」</title>
+<script>(function(){try{var t=localStorage.getItem('rk-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body class="rk">
+<div class="rk-tools"><button type="button" data-rk="theme" aria-label="切换深浅色">◐ 深浅色</button><button type="button" data-rk="print">打印 / PDF</button></div>
+<div class="rk-page">
+<nav class="rk-toc" aria-label="目录"></nav>
+<article class="rk-paper">
+
+<!-- ============ 抬头 ============ -->
+<header class="rk-head">
+  <div class="rk-eyebrow">
+    <span class="rk-kind"><span>「报告类型，如：技术评估报告」</span><span>「编号」</span></span>
+    <!-- 状态：rk-st-draft 草稿 / rk-st-review 评审中 / rk-st-final 定稿 -->
+    <span class="rk-status rk-st-draft">草稿</span>
+  </div>
+  <h1 class="rk-title">「标题写结论：例如 线性模型够用，下一步该换标签」</h1>
+  <p class="rk-subtitle">「一句话说明这份报告回答什么问题、用了什么数据」</p>
+  <dl class="rk-meta">
+    <div><dt>日期</dt><dd>「YYYY-MM-DD」</dd></div>
+    <div><dt>作者</dt><dd>「作者」</dd></div>
+    <div><dt>版本</dt><dd>v0.1</dd></div>
+    <div><dt>数据</dt><dd>「样本范围」</dd></div>
+    <div><dt>切分</dt><dd>「训练 / 测试」</dd></div>
+  </dl>
+</header>
+
+<!-- ============ 结论（先说结论） ============ -->
+<section class="rk-summary" aria-label="结论">
+  <div class="rk-label">结论</div>
+  <ol class="rk-findings">
+    <li><b>「一句话结论一。」</b> 「依据、数字和条件。」</li>
+    <li><b>「一句话结论二。」</b> 「依据、数字和条件。」</li>
+    <li><b>「一句话结论三。」</b> 「依据、数字和条件。」</li>
+  </ol>
+  <div class="rk-decision"><span class="rk-tag">需要决策</span><p>「需要读者决定的事；没有就删掉这一块」</p></div>
+</section>
+
+<!-- ============ 关键指标（2–4 个） ============ -->
+<!-- 变化的颜色：rk-good-t 变好 / rk-bad-t 变差 / rk-flat-t 中性；箭头 ▲ ▼ 表示方向 -->
+<div class="rk-kpis">
+  <div class="rk-kpi">
+    <div class="rk-kpi-label">「指标名」</div>
+    <div class="rk-kpi-value">0.784</div>
+    <div class="rk-kpi-delta rk-good-t"><span>▲ +0.024</span><span class="rk-ref">对比基线</span></div>
+    <div class="rk-spark" data-spark="[0.79,0.78,0.80,0.79,0.80,0.83,0.71,0.74,0.76,0.82,0.75,0.77,0.81,0.79,0.78]"></div>
+  </div>
+  <div class="rk-kpi">
+    <div class="rk-kpi-label">「越低越好的指标」</div>
+    <div class="rk-kpi-value">0.5606</div>
+    <div class="rk-kpi-delta rk-good-t"><span>▼ −0.0221</span><span class="rk-ref">对比基线</span></div>
+  </div>
+  <div class="rk-kpi">
+    <div class="rk-kpi-label">「样本量」</div>
+    <div class="rk-kpi-value">45,000</div>
+    <div class="rk-kpi-note">「口径说明」</div>
+  </div>
+</div>
+
+<!-- ============ 1 章节 ============ -->
+<section class="rk-section">
+  <h2 id="s1"><span class="rk-n">1</span>背景与问题</h2>
+  <p>「正文。一段一个意思，先结论后细节。」行内代码用 <code>code</code>。</p>
+  <ul>
+    <li>「要回答的问题一」</li>
+    <li>「要回答的问题二」</li>
+  </ul>
+</section>
+
+<!-- ============ 2 章节：口径、表格、提示框 ============ -->
+<section class="rk-section">
+  <h2 id="s2"><span class="rk-n">2</span>数据与口径</h2>
+  <dl class="rk-defs">
+    <dt>样本</dt><dd>「样本定义」</dd>
+    <dt>标签</dt><dd>「标签定义」</dd>
+    <dt>切分</dt><dd>「按天切分，避免相邻样本同时出现在训练集和测试集」</dd>
+  </dl>
+
+  <!-- 表格：数字列加 class="rk-r"（右对齐、等宽数字）；最好值加 rk-best；变好 / 变差 rk-tg / rk-tb；整行高亮 tr.rk-hl -->
+  <div class="rk-tbl">
+    <div class="rk-cap"><span class="rk-capn">表 1</span><span class="rk-capt">「表标题写结论」</span><span class="rk-caps">「口径和单位」</span></div>
+    <div class="rk-tablewrap"><table class="rk-table">
+      <thead><tr><th>模型</th><th class="rk-r">AUC</th><th class="rk-r">对数损失</th><th class="rk-r">Δ AUC</th><th>结论</th></tr></thead>
+      <tbody>
+        <tr><td>基线</td><td class="rk-r">0.7598</td><td class="rk-r">0.5827</td><td class="rk-r">+0.0000</td><td><span class="rk-badge">参照</span></td></tr>
+        <tr class="rk-hl"><td>「新模型」</td><td class="rk-r rk-best">0.7841</td><td class="rk-r rk-best">0.5606</td><td class="rk-r rk-tg">+0.0243</td><td><span class="rk-badge rk-good">采用</span></td></tr>
+      </tbody>
+    </table></div>
+    <div class="rk-source">「数据来源、条件；圆点标出每列最好的值」</div>
+  </div>
+
+  <!-- 提示框：默认是说明；rk-warn 注意 / rk-risk 风险 / rk-good 结论 / rk-decision 需要决策 -->
+  <div class="rk-callout" role="note"><span class="rk-ico" aria-hidden="true">i</span><div class="rk-ctitle">说明</div><div class="rk-cbody"><p>「补充说明」</p></div></div>
+  <div class="rk-callout rk-warn" role="note"><span class="rk-ico" aria-hidden="true">!</span><div class="rk-ctitle">注意</div><div class="rk-cbody"><p>「容易误读的地方」</p></div></div>
+</section>
+
+<!-- ============ 3 章节：图表 ============ -->
+<section class="rk-section">
+  <h2 id="s3"><span class="rk-n">3</span>主要结果</h2>
+  <h3 id="s3-1"><span class="rk-n">3.1</span>「小节标题」</h3>
+
+  <!-- 折线：x 是数字或字符串；series 每条 {name, values}；>= 2 条自动出图例，<= 4 条在线尾直接标名字 -->
+  <figure class="rk-fig">
+    <div class="rk-fighead"><div class="rk-cap"><span class="rk-capn">图 1</span><span class="rk-capt">「图标题写结论」</span><span class="rk-caps">「画的是什么、单位」</span></div></div>
+    <div class="rk-chart"><script type="application/json">
+      {"type":"line","x":["D1","D2","D3","D4","D5","D6"],
+       "series":[{"name":"基线","values":[0.77,0.76,0.77,0.76,0.78,0.81]},{"name":"新模型","values":[0.80,0.79,0.80,0.79,0.80,0.84]}],
+       "yLabel":"AUC","yFormat":".3f","markers":true}
+    </script></div>
+    <div class="rk-source">「数据来源、条件」</div>
+  </figure>
+
+  <!-- 两图并排：外面套 rk-cols，手机上自动变成一列 -->
+  <div class="rk-cols" style="--n:2">
+    <figure class="rk-fig">
+      <div class="rk-fighead"><div class="rk-cap"><span class="rk-capn">图 2</span><span class="rk-capt">「柱状图：比较大小」</span></div></div>
+      <div class="rk-chart"><script type="application/json">
+        {"type":"bar","categories":["特征 A","特征 B","特征 C","特征 D"],"series":[{"name":"重要性","values":[0.149,0.020,0.008,0.007]}],"valueFormat":".3f"}
+      </script></div>
+    </figure>
+    <figure class="rk-fig">
+      <div class="rk-fighead"><div class="rk-cap"><span class="rk-capn">图 3</span><span class="rk-capt">「热力图：相关系数」</span></div></div>
+      <div class="rk-chart"><script type="application/json">
+        {"type":"heatmap","rows":["A","B","C"],"cols":["A","B","C"],"values":[[1,0.45,0.3],[0.45,1,0.7],[0.3,0.7,1]],"domain":[-1,1]}
+      </script></div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ 下一步 ============ -->
+<section class="rk-section">
+  <h2 id="s4"><span class="rk-n">4</span>下一步</h2>
+  <div class="rk-tbl rk-actions"><div class="rk-tablewrap"><table class="rk-table">
+    <thead><tr><th>#</th><th>事项</th><th>负责人</th><th>时间</th><th>状态</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>「事项」</td><td>「人」</td><td>「时间」</td><td><span class="rk-badge rk-info">进行中</span></td></tr>
+      <tr><td>2</td><td>「事项」</td><td>「人」</td><td>「时间」</td><td><span class="rk-badge">未开始</span></td></tr>
+      <tr><td>3</td><td>「事项」</td><td>「人」</td><td>「时间」</td><td><span class="rk-badge rk-warn">有风险</span></td></tr>
+    </tbody>
+  </table></div></div>
+</section>
+
+<!-- ============ 附录 ============ -->
+<div class="rk-appendix-start"><div class="rk-label">附录</div></div>
+<section class="rk-section">
+  <h2 id="sA"><span class="rk-n">A</span>方法与复现</h2>
+  <div class="rk-code rk-has-lang"><span class="rk-lang">bash</span><pre><code>「复现命令」</code></pre></div>
+</section>
+
+<!-- ============ 版本记录 ============ -->
+<footer class="rk-foot">
+  <div class="rk-tbl"><div class="rk-cap"><span class="rk-capt">版本记录</span></div>
+    <div class="rk-tablewrap"><table class="rk-table"><thead><tr><th>版本</th><th>日期</th><th>说明</th></tr></thead>
+    <tbody><tr><td>v0.1</td><td class="rk-tnum">「YYYY-MM-DD」</td><td>初稿</td></tr></tbody></table></div></div>
+  <p>内部资料，仅供讨论。</p>
+</footer>
+
+</article>
+</div>
+<script src="theme.js"></script>
+</body>
+</html>

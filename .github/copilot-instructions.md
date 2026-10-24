@@ -16,6 +16,7 @@
 | `docs/signal-model/dl/*.md` | 每个深度学习模型一页 |
 | `src/arrivals/` | 到达分布检验包（H1–H9），入口 `report.py` |
 | `src/execrl/` | 执行决策包（bandit、离线 RL、PPO），入口 `train.py` |
+| `src/reportkit/` | 交付报告主题：`Report` 生成单文件 HTML 报告，`charts` 生成图表 spec，`assets/` 里是 theme.css、theme.js、空白模板；规范在 `docs/report-theme/README.md` |
 | `src/tests/` | pytest 测试 |
 | `site/build.py` | 把 Markdown 和 `src/**/*.py` 生成静态站点；GitHub Actions 推送后自动发布到 Pages |
 | `site/encrypt_page.py`、`site/encrypted/` | 需要密码的笔记页：只提交密文 JSON，Markdown 原文和密码都不进仓库 |
@@ -28,7 +29,8 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 PYTHONPATH=src python -m pytest -q src/tests                 # all tests, about 30 s
 PYTHONPATH=src python -m arrivals.report --synthetic --days 3 --out synthetic.csv
 PYTHONPATH=src python -m execrl.train all --out runs/all
-python site/build.py                                         # builds _site/
+PYTHONPATH=src python -m reportkit example report.html       # example report (synthetic data)
+python site/build.py                                         # builds _site/ (needs numpy for report/)
 ```
 
 ## 写法约定
@@ -47,6 +49,16 @@ python site/build.py                                         # builds _site/
 - `execrl` 的策略签名统一为 `policy(x, mask, rng) -> (actions, propensities)`；数据用 `BanditLog` / `Transitions`；超参数只放在 `config.py`。
 - `arrivals` 的检验函数返回 dict（`stat`、`p_value`、`effect`、`effect_name`、`n`），在 `report.run_day` 里用 `_row(...)` 加到结果表。
 
+## 交付报告
+
+所有对内的报告都用 `src/reportkit` 生成，不要手写 CSS、不要引入其他前端库或图表库。完整规范（结构、写作规则、选图、组件、图表 spec、交付检查、提示词）在 `docs/report-theme/README.md`，示例在 `src/reportkit/example.py`。要点：
+
+- 顺序固定：`Report(...)` → `summary` → `kpis` → `section`…（含「风险与局限」）→ `actions` → `appendix` → `changelog` → `save`。
+- 标题和每个图表标题写结论；结论区 3–5 条，每条以一句 `**加粗**` 的结论开头。
+- 数字都从变量格式化，不手填；图表编号用 `r.chart` / `r.table` 的返回值引用。
+- 图表只用 `reportkit.charts`；同一个对象在所有图里用同一个系列名（颜色跟着名字走）；不用饼图和双 y 轴。
+- 改主题时同时改 `assets/theme.css`、`assets/theme.js`、规范页第 5–7 节和 `src/tests/test_reportkit.py`；改完用浏览器看浅色、深色、手机宽度和打印预览。
+
 ## 待办（按优先级）
 
 **到达分布检验（`src/arrivals/`）**
@@ -62,6 +74,10 @@ python site/build.py                                         # builds _site/
 3. 离散 CQL（`offline/cql.py`，文档 7.3 节），和 IQL 用同一个训练函数模板。
 4. 慢模拟器的进程池版本（每个 worker 一个环境），对接 `online/ppo.collect`。
 5. 风险敏感评估：在 `evaluate.py` 加 CVaR 的估计和 bootstrap 置信区间。
+
+**交付报告（`src/reportkit/`）**
+1. 图表类型：箱线图（分组分布）、带误差线的点图（区间估计）、小倍数（同一图按组拆开）。
+2. `Report.table` 支持长表折叠（超过 N 行时显示前 N 行和「展开」）。
 
 **机器学习和深度学习**
 1. 把 `ml-pipeline.md` 和 `dl/*.md` 里的代码整理成包（例如 `src/sigml/`、`src/lobdl/`），目录风格照 `execrl`：`config.py`、`data.py`、模型模块、`train.py`、测试。

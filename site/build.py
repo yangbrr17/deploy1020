@@ -8,12 +8,15 @@ Password-protected pages: site/encrypted/<slug>.json (made by site/encrypt_page.
 that is NOT committed) become notes/<slug>.html; the browser decrypts them with the password.
 Python files under src/ become source pages (foo.py -> foo.py.html) with a table of their top-level
 functions and classes; Markdown links to a .py file are rewritten to that page.
+Report theme: report/example.html is built by src/reportkit (needs numpy) and report/ also gets theme.css,
+theme.js and template.html; NAV entries starting with "@" link to such built files directly.
 """
 import ast
 import html
 import json
 import re
 import shutil
+import sys
 from pathlib import Path
 
 import markdown
@@ -24,6 +27,11 @@ OUT = ROOT / "_site"
 # Sidebar order: (source, label, indent level). Pages not listed here are still built, just not in the nav.
 NAV = [
     ("", [("README.md", "首页", 0)]),
+    ("交付报告", [
+        ("docs/report-theme/README.md", "报告主题：规范与用法", 0),
+        ("@report/example.html", "示例报告 ↗", 1),
+        ("@report/template.html", "空白模板 ↗", 1),
+    ]),
     ("信号建模", [
         ("docs/signal-model/modeling-guide.md", "建模总览：输入、输出、改进路线", 0),
         ("docs/signal-model/features-and-targets.md", "变量与预测目标", 0),
@@ -232,6 +240,9 @@ def nav_html(cur: str) -> str:
         if group:
             parts.append(f"<h4>{group}</h4>")
         for src, label, level in items:
+            if src.startswith("@"):                  # a built file, not a Markdown source
+                parts.append(f'<a class="{"sub" if level else ""}" href="{rel(me, src[1:])}">{label}</a>')
+                continue
             if not (ROOT / src).exists():
                 continue
             cls = " ".join(c for c in ("sub" if level else "", "on" if src == cur else "") if c)
@@ -316,6 +327,24 @@ def page_html(src, title, body, has_math, has_mermaid, footer, extra_js=""):
 """
 
 
+BACK = ('<div class="rk-tools" style="left:14px;right:auto"><a href="../docs/report-theme/README.html" '
+        'style="font:12.5px/1 system-ui,sans-serif;color:var(--rk-ink-2);background:var(--rk-paper);'
+        'border:1px solid var(--rk-line-2);border-radius:7px;padding:7px 10px;text-decoration:none">← 规范与用法</a></div>')
+
+
+def build_reports():
+    """report/: the example report (synthetic data), the blank template and the theme files."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from reportkit.example import build as build_example
+    from reportkit.report import ASSETS
+    out = OUT / "report"
+    build_example(out / "example.html")
+    page = (out / "example.html").read_text(encoding="utf8")
+    (out / "example.html").write_text(page.replace('<body class="rk">', '<body class="rk">\n' + BACK, 1), encoding="utf8")
+    for f in ("theme.css", "theme.js", "template.html"):
+        shutil.copy(ASSETS / f, out / f)
+
+
 def write(src, page):
     dst = OUT / out_path(src)
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -345,6 +374,7 @@ def build():
         extra = f"\n<script>window.LOCKED={payload};</script>\n<script>{LOCKED_JS}</script>"
         write(d["src"], page_html(d["src"], d["title"], body, True, False,
                                   "内容在浏览器里用密码解密（AES-GCM，PBKDF2-SHA256）", extra))
+    build_reports()
     (OUT / ".nojekyll").write_text("")
     (OUT / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
     print(f"built {len(sources) + len(locked)} pages into {OUT} ({len(locked)} password-protected)")
