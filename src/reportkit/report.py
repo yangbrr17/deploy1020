@@ -1,27 +1,31 @@
-"""Build a single-file HTML report in the reportkit theme.
+"""Build a single-file HTML research note in the reportkit theme (v2).
 
     from reportkit import Report, charts, badge
-    r = Report("方向信号模型评估", subtitle="一句话说明这份报告回答什么问题", kind="技术评估报告",
-               status="review", meta={"日期": "2026-10-24", "作者": "（作者）", "版本": "v1.0"})
-    r.summary(["**结论一。** 细节和条件。", "**结论二。** ……"], decision="需要确认的事")
-    r.kpis([{"label": "AUC（测试集）", "value": 0.81, "fmt": ".3f", "delta": 0.02, "better": "up", "ref": "对比基线"}])
-    r.section("数据与口径")
-    r.p("正文支持 **加粗**、`代码`、[链接](https://example.org) 和 $x^2$ 行内公式。")
-    r.table(rows, title="……", fmt={"AUC": ".3f"}, best={"AUC": "max"})
-    r.chart(charts.line(x, {"模型": y}), title="图标题写结论", source="数据：……")
+    r = Report("结论写进标题", dek="一段话说明回答什么问题、用什么数据", kicker=["量化研究", "模型评估"],
+               status="review", date="2026-10-24", version="v1.0", meta={"作者": "（作者）", "数据": "……"})
+    r.kpis([{"label": "AUC", "value": 0.784, "fmt": ".3f", "delta": 0.024, "better": "up", "ref": "对比基线"}])
+    with r.row():
+        r.takeaways(["**结论一。** 依据。", "**结论二。** 依据。"], span=8)
+        r.info({"数据": "……", "切分": "……"}, decision="需要读者决定的事", span=4)
+    r.section("主要结果", lead="这一节的结论，一句话。")
+    with r.row(height=280):                       # every row is 12 columns; spans must add up to 12
+        r.table(rows, span=7, title="……", fmt={"AUC": ".4f"}, best={"AUC": "max"})
+        r.chart(charts.waterfall(...), span=5, title="……", source="……")
     r.save("report.html")
 
 Contract
-- Output is ONE html file: theme.css and theme.js are inlined, charts are JSON specs that theme.js draws
-  in the browser (so they follow the light/dark theme and the container width). No network is needed,
-  except KaTeX from a CDN when the report contains math; offline, the LaTeX source is shown instead.
-- Every string argument is HTML-escaped. The only markup is the inline set above (**bold**, `code`,
-  [text](url), $tex$; write a literal dollar as \\$). Report.html() inserts raw HTML you trust.
-- Sections, figures and tables are numbered here (1, 1.1, A; 图 n; 表 n), so the numbers in the text,
-  the captions and the table of contents always agree. r.chart() and r.table() return their label
-  ("图 3"), use it in the text: f"见{fig}".
-- Order of a report (docs/report-theme/README.md, "报告结构"): header -> summary -> kpis -> numbered
-  sections -> next steps -> appendix -> changelog.
+- Output is ONE html file: theme.css, theme.js and the Inter font (OFL) are inlined; charts are JSON specs
+  drawn by theme.js in the browser (they follow light/dark and the panel size). No network is needed, except
+  KaTeX from a CDN when the report contains math; offline, the LaTeX source is shown instead.
+- Layout: a section is a stack of rows; a row is 12 columns of panels. Panels in one row share the title
+  line, the plot top and the source line (CSS subgrid). r.chart / r.table / r.text / r.callout outside a
+  row become a full-width row of their own. A row whose spans do not add up to 12 raises ValueError.
+- Every string argument is HTML-escaped; the inline markup is **bold**, `code`, [text](url), $tex$
+  (a literal dollar is \\$). Report.html() inserts raw HTML you trust.
+- Figures and tables are numbered here (图 n, 表 n); r.chart() / r.table() return the label for the text.
+- Order of a note (docs/report-theme/README.md, "报告结构"): masthead + headline -> KPI strip -> takeaways
+  + info -> numbered sections (results, robustness, drivers, data, tests and risks) -> next steps ->
+  appendix -> changelog.
 """
 from __future__ import annotations
 
@@ -43,14 +47,10 @@ KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist"
 
 STATUS = {"draft": ("草稿", "rk-st-draft"), "review": ("评审中", "rk-st-review"), "final": ("定稿", "rk-st-final"),
           "草稿": ("草稿", "rk-st-draft"), "评审中": ("评审中", "rk-st-review"), "定稿": ("定稿", "rk-st-final")}
-CALLOUTS = {  # kind -> (default title, icon glyph)
-    "note": ("说明", "i"), "warn": ("注意", "!"), "risk": ("风险", "!"),
-    "good": ("结论", "✓"), "decision": ("需要决策", "?"),
-}
+CALLOUTS = {"note": "说明", "warn": "注意", "risk": "风险", "good": "结论", "decision": "需要决策"}
 TONES = ("good", "warn", "serious", "bad", "info", "neutral")
 ACTION_TONES = {"完成": "good", "已完成": "good", "进行中": "info", "未开始": "neutral", "待开始": "neutral",
                 "阻塞": "bad", "有风险": "warn", "待定": "warn", "取消": "neutral"}
-
 EARLY_JS = ("(function(){try{var t=localStorage.getItem('rk-theme');"
             "if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}})();")
 
@@ -70,7 +70,7 @@ class Raw:
 
 
 class Badge:
-    """Status pill: icon + label (never colour alone). tone: good, warn, serious, bad, info, neutral."""
+    """Status tag: icon + label (never colour alone). tone: good, warn, serious, bad, info, neutral."""
     def __init__(self, text: str, tone: str = "neutral"):
         if tone not in TONES:
             raise ValueError(f"tone must be one of {TONES}")
@@ -115,8 +115,7 @@ def inline(text) -> str:
         if m.group(1) is not None:
             out.append(f"<code>{esc(m.group(1))}</code>")
         else:
-            tex = m.group(2)
-            out.append(f'<span class="rk-im" data-tex="{esc(tex)}">{esc(tex)}</span>')
+            out.append(f'<span class="rk-im" data-tex="{esc(m.group(2))}">{esc(m.group(2))}</span>')
         pos = m.end()
     out.append(_rich(s[pos:]))
     return "".join(out)
@@ -164,108 +163,155 @@ def fmt_num(v, spec=None) -> str:
     return "−" + s[1:] if s.startswith("-") else s          # typographic minus
 
 
-def _json_script(spec) -> str:
-    s = json.dumps(_py(spec), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    return s.replace("</", "<\\/")
+def _json(spec) -> str:
+    return json.dumps(_py(spec), ensure_ascii=False, separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
+
+
+def _font_faces(css: str) -> str:
+    """Inline the woff2 files referenced by theme.css as data URIs."""
+    def sub(m):
+        f = ASSETS / m.group(1)
+        return f'url("data:font/woff2;base64,{base64.b64encode(f.read_bytes()).decode()}")' if f.exists() else m.group(0)
+    return re.sub(r'url\("(fonts/[^"]+\.woff2)"\)', sub, css)
+
+
+def theme_css() -> str:
+    return _font_faces((ASSETS / "theme.css").read_text(encoding="utf8"))
+
+
+def theme_js() -> str:
+    return (ASSETS / "theme.js").read_text(encoding="utf8")
 
 
 # ----------------------------------------------------------------------------- the report
 class Report:
-    def __init__(self, title: str, *, subtitle: str | None = None, kind: str | None = None,
-                 doc_id: str | None = None, status: str | None = None, meta: dict | None = None,
-                 footer: str | None = "内部资料，仅供讨论。", lang: str = "zh-CN", generated: str | None = None,
-                 katex: str = "auto"):
-        """status: draft / review / final (or 草稿 / 评审中 / 定稿). meta: ordered {label: value}, e.g.
-        {"日期": ..., "作者": ..., "版本": ..., "数据": ..., "范围": ...}. katex: "auto" (load KaTeX only if the
-        report has math), "cdn" (always) or None (never; LaTeX source shown)."""
-        self.title, self.subtitle, self.kind, self.doc_id = title, subtitle, kind, doc_id
-        self.status, self.meta, self.footer, self.lang, self.katex = status, meta or {}, footer, lang, katex
-        self.generated = generated
+    def __init__(self, title: str, *, dek: str | None = None, kicker=None, kind: str = "研究简报",
+                 doc_id: str | None = None, status: str | None = None, date: str | None = None,
+                 version: str | None = None, meta: dict | None = None, footer: str | None = "内部资料，仅供讨论。",
+                 lang: str = "zh-CN", generated: str | None = None, katex: str = "auto", subtitle: str | None = None):
+        """kind: the product line in the masthead ("研究简报", "技术评估报告"); kicker: str or list shown above
+        the headline; status: draft / review / final; meta: {label: value} for the byline (author, data, split).
+        katex: "auto" (load only if the note has math), "cdn" (always) or None (never; LaTeX source shown)."""
+        self.title, self.dek, self.kind, self.doc_id = title, dek or subtitle, kind, doc_id
+        self.kicker = [kicker] if isinstance(kicker, str) else list(kicker or [])
+        self.status, self.date, self.version = status, date, version
+        self.meta, self.footer, self.lang, self.katex, self.generated = meta or {}, footer, lang, katex, generated
         self._blocks: list[str] = []
         self._sec = 0
-        self._sub = 0
-        self._app = 0                   # appendix letter index
+        self._app = 0
         self._open = False
         self._fig = 0
         self._tab = 0
+        self._row: dict | None = None
         self._changelog: list[tuple] = []
         self._math = False
 
     # ---- structure -----------------------------------------------------------------------------
     def _close(self):
+        if self._row is not None:
+            raise RuntimeError("close the row (end the `with r.row():` block) before starting a section")
         if self._open:
             self._blocks.append("</section>")
             self._open = False
 
+    def _head(self, sid: str, n: str, title: str, lead: str | None, cls: str = "") -> None:
+        lead_html = f'<p class="rk-lead">{inline(lead)}</p>' if lead else ""
+        self._blocks.append(f'<section class="rk-sec{cls}" id="{sid}"><div class="rk-sec-head"><span class="rk-n">{n}</span>'
+                            f"<h2>{inline(title)}</h2>{lead_html}</div>")
+        self._open = True
+
     def section(self, title: str, lead: str | None = None) -> str:
-        """Numbered top-level section (1, 2, ...). Returns its number."""
+        """Numbered section (1, 2, ...). lead: the section's conclusion in one sentence. Returns the number."""
         if self._app:
-            raise RuntimeError("sections after the appendix are not allowed; use subsection()")
+            raise RuntimeError("sections after the appendix are not allowed")
         self._close()
         self._sec += 1
-        self._sub = 0
-        n = str(self._sec)
-        self._blocks.append(f'<section class="rk-section"><h2 id="s{n}"><span class="rk-n">{n}</span>{inline(title)}</h2>')
-        if lead:
-            self._blocks.append(f'<p class="rk-lead">{inline(lead)}</p>')
-        self._open = True
-        return n
+        self._head(f"s{self._sec}", str(self._sec), title, lead)
+        return str(self._sec)
 
-    def subsection(self, title: str) -> str:
-        self._sub += 1
-        top = chr(64 + self._app) if self._app else str(self._sec)
-        n = f"{top}.{self._sub}"
-        self._blocks.append(f'<h3 id="s{n.replace(".", "-")}"><span class="rk-n">{n}</span>{inline(title)}</h3>')
-        return n
-
-    def appendix(self, title: str) -> str:
+    def appendix(self, title: str, lead: str | None = None) -> str:
         """Appendix section A, B, ... (after all numbered sections)."""
         self._close()
         if not self._app:
-            self._blocks.append('<div class="rk-appendix-start"><div class="rk-label">附录</div></div>')
+            self._blocks.append('<div class="rk-appendix-start">附录</div>')
         self._app += 1
-        self._sub = 0
         n = chr(64 + self._app)
-        self._blocks.append(f'<section class="rk-section rk-appendix"><h2 id="s{n}"><span class="rk-n">{n}</span>{inline(title)}</h2>')
-        self._open = True
+        self._head(f"s{n}", n, title, lead, " rk-appendix")
         return n
+
+    @contextlib.contextmanager
+    def row(self, height: int | None = None):
+        """A 12-column row of panels: `with r.row(height=260): r.chart(..., span=4) ...`. Spans left out are
+        split equally; the total must be 12. height (px) is the minimum plot height; a chart grows to the
+        height of the tallest neighbour so plot tops and source lines align."""
+        if self._row is not None:
+            raise RuntimeError("rows cannot be nested")
+        self._row = {"panels": [], "height": height}
+        try:
+            yield
+        finally:
+            row, self._row = self._row, None
+        self._emit_row(row)
+
+    def _emit_row(self, row):
+        panels = row["panels"]
+        if not panels:
+            return
+        given = sum(s for s, _ in panels if s)
+        free = [i for i, (s, _) in enumerate(panels) if not s]
+        if free:
+            each, rem = divmod(12 - given, len(free))
+            if each <= 0 or rem:
+                raise ValueError(f"cannot split {12 - given} remaining columns evenly over {len(free)} panels; give span=")
+            panels = [(s or each, h) for s, h in panels]
+        total = sum(s for s, _ in panels)
+        if total != 12:
+            raise ValueError(f"row spans add up to {total}, not 12: {[s for s, _ in panels]}")
+        style = f' style="--h:{int(row["height"])}px"' if row["height"] else ""
+        self._blocks.append(f'<div class="rk-row"{style}>' + "".join(h.replace("%%RK_SPAN%%", str(s)) for s, h in panels) + "</div>")
+
+    def _panel(self, body: str, *, span, label: str = "", title=None, subtitle=None, source=None, cls: str = "") -> None:
+        head = (f'<div class="rk-ph">' + (f'<div class="rk-pl">{esc(label)}</div>' if label else "")
+                + (f'<div class="rk-pt">{inline(title)}</div>' if title else "")
+                + (f'<div class="rk-ps">{inline(subtitle)}</div>' if subtitle else "") + "</div>")
+        foot = f'<div class="rk-pf"><span class="rk-src">{inline(source) if source else ""}</span></div>'
+        html_ = f'<figure class="rk-panel {cls}" style="--span:%%RK_SPAN%%">{head}<div class="rk-pb">{body}</div>{foot}</figure>'
+        if span is not None and not (isinstance(span, int) and 1 <= span <= 12):
+            raise ValueError("span must be an integer 1..12")
+        if self._row is None:                       # a panel on its own is a full-width row
+            if span not in (None, 12):
+                raise ValueError("a panel outside `with r.row():` is full width; put it in a row to use span")
+            self._emit_row({"panels": [(12, html_)], "height": None})
+        else:
+            self._row["panels"].append((span, html_))
 
     # ---- text ----------------------------------------------------------------------------------
     def p(self, text) -> None:
-        """Paragraph(s); a blank line starts a new paragraph."""
-        self._blocks.append(_paras(text))
-
-    def lead(self, text) -> None:
-        self._blocks.append(f'<p class="rk-lead">{inline(text)}</p>')
+        """Full-width prose; a blank line starts a new paragraph. Prefer r.text() panels inside rows."""
+        self._blocks.append(f'<div class="rk-prose">{_paras(text)}</div>')
 
     def bullets(self, items, ordered: bool = False) -> None:
         tag = "ol" if ordered else "ul"
-        self._blocks.append(f"<{tag}>" + "".join(f"<li>{inline(i)}</li>" for i in items) + f"</{tag}>")
+        self._blocks.append(f'<div class="rk-prose"><{tag}>' + "".join(f"<li>{inline(i)}</li>" for i in items) + f"</{tag}></div>")
 
-    def defs(self, pairs) -> None:
-        """Definition grid: {term: definition} or [(term, definition), ...]."""
-        items = pairs.items() if isinstance(pairs, dict) else pairs
-        self._blocks.append('<dl class="rk-defs">' + "".join(
-            f"<dt>{inline(k)}</dt><dd>{inline(v)}</dd>" for k, v in items) + "</dl>")
+    def text(self, body, title: str | None = None, *, span: int | None = None, label: str = "分析",
+             source: str | None = None) -> None:
+        """Narrative panel in the grid (paragraphs, or a list of bullet strings)."""
+        self._panel(_paras(body), span=span, label=label, title=title, source=source, cls="rk-text")
 
-    def callout(self, body, title: str | None = None, kind: str = "note") -> None:
-        """kind: note (说明), warn (注意), risk (风险), good (结论), decision (需要决策). body: str or list."""
+    def callout(self, body, title: str | None = None, kind: str = "note", *, span: int | None = None) -> None:
+        """Callout panel. kind: note (说明), warn (注意), risk (风险), good (结论), decision (需要决策)."""
         if kind not in CALLOUTS:
             raise ValueError(f"kind must be one of {tuple(CALLOUTS)}")
-        t, icon = CALLOUTS[kind]
-        cls = "" if kind == "note" else f" rk-{kind}"
-        self._blocks.append(
-            f'<div class="rk-callout{cls}" role="note"><span class="rk-ico" aria-hidden="true">{icon}</span>'
-            f'<div class="rk-ctitle">{inline(title or t)}</div><div class="rk-cbody">{_paras(body)}</div></div>')
+        self._panel(_paras(body), span=span, label=CALLOUTS[kind], title=title, cls=f"rk-text rk-call-{kind}")
 
     def code(self, text: str, lang: str | None = None) -> None:
-        cls = " rk-has-lang" if lang else ""
         lab = f'<span class="rk-lang">{esc(lang)}</span>' if lang else ""
         lc = f' class="language-{esc(lang)}"' if lang else ""
-        self._blocks.append(f'<div class="rk-code{cls}">{lab}<pre><code{lc}>{esc(text.strip(chr(10)))}</code></pre></div>')
+        self._blocks.append(f'<div class="rk-code">{lab}<pre><code{lc}>{esc(text.strip(chr(10)))}</code></pre></div>')
 
     def math(self, tex: str) -> None:
-        """Display formula (KaTeX). The block has a "复制 LaTeX" button."""
+        """Display formula (KaTeX) with a "复制 LaTeX" button."""
         self._math = True
         tex = tex.strip()
         self._blocks.append(f'<div class="rk-math" data-tex="{esc(tex)}"><span class="rk-tex">{esc(tex)}</span></div>')
@@ -274,69 +320,77 @@ class Report:
         self._blocks.append(raw)
 
     # ---- front matter --------------------------------------------------------------------------
-    def summary(self, findings, decision: str | None = None, label: str = "结论") -> None:
-        """Bottom line up front. Each finding: "**一句话结论。** 依据和条件". decision: what the reader must decide."""
-        items = "".join(f"<li>{inline(f)}</li>" for f in findings)
-        dec = (f'<div class="rk-decision"><span class="rk-tag">需要决策</span><p>{inline(decision)}</p></div>'
-               if decision else "")
-        self._blocks.append(f'<section class="rk-summary" aria-label="{esc(label)}"><div class="rk-label">{esc(label)}</div>'
-                            f'<ol class="rk-findings">{items}</ol>{dec}</section>')
-
     def kpis(self, items) -> None:
-        """Stat tiles. Each item: dict(label, value, fmt=None, unit=None, delta=None, delta_fmt=None,
-        better="up"|"down"|None, ref=None, note=None, spark=None). Colour of the delta = direction x better."""
-        tiles = []
+        """KPI strip under the headline. Each item: dict(label, value, fmt, unit, delta, delta_fmt,
+        better="up"|"down"|None, ref, note, spark). Delta colour = direction x better; arrow shows direction.
+        value may be a string (e.g. a range "0.71–0.84")."""
+        cells = []
         for k in items:
             v = k.get("value")
             val = esc(fmt_num(v, k.get("fmt")) if _is_num(v) else ("–" if v is None else v))
             unit = f"<small>{esc(k['unit'])}</small>" if k.get("unit") else ""
             parts = [f'<div class="rk-kpi-label">{inline(k["label"])}</div>', f'<div class="rk-kpi-value">{val}{unit}</div>']
             d = k.get("delta")
+            ref = f'<span class="rk-ref">{inline(k["ref"])}</span>' if k.get("ref") else ""
             if _is_num(d):
                 better = k.get("better")
-                tone = "flat" if d == 0 or not better else ("good" if (d > 0) == (better == "up") else "bad")
+                tone = "flat" if d == 0 or not better else ("up" if (d > 0) == (better == "up") else "down")
                 arrow = "▲" if d > 0 else "▼" if d < 0 else "–"
-                ds = fmt_num(d, k.get("delta_fmt") or "+.3g")
-                ref = f'<span class="rk-ref">{inline(k["ref"])}</span>' if k.get("ref") else ""
-                parts.append(f'<div class="rk-kpi-delta rk-{tone}-t"><span>{arrow} {esc(ds)}</span>{ref}</div>')
-            elif k.get("ref"):
-                parts.append(f'<div class="rk-kpi-delta rk-flat-t"><span class="rk-ref">{inline(k["ref"])}</span></div>')
+                parts.append(f'<div class="rk-kpi-delta rk-{tone}-t"><span>{arrow} {esc(fmt_num(d, k.get("delta_fmt") or "+.3g"))}</span>{ref}</div>')
+            elif ref:
+                parts.append(f'<div class="rk-kpi-delta">{ref}</div>')
             if k.get("note"):
                 parts.append(f'<div class="rk-kpi-note">{inline(k["note"])}</div>')
             if k.get("spark") is not None:
-                parts.append(f'<div class="rk-spark" data-spark="{esc(_json_script(list(k["spark"])))}"></div>')
-            tiles.append('<div class="rk-kpi">' + "".join(parts) + "</div>")
-        self._blocks.append('<div class="rk-kpis">' + "".join(tiles) + "</div>")
+                parts.append(f'<div class="rk-spark" data-spark="{esc(_json(list(k["spark"])))}"></div>')
+            cells.append('<div class="rk-kpi">' + "".join(parts) + "</div>")
+        self._blocks.append(f'<div class="rk-strip" style="--n:{len(cells)}">' + "".join(cells) + "</div>")
+
+    def takeaways(self, points, *, span: int | None = None, title: str | None = None, label: str = "要点") -> None:
+        """Numbered key points. Each: "**一句话结论。** 依据和条件"."""
+        body = '<ol class="rk-points">' + "".join(f"<li><div>{inline(p)}</div></li>" for p in points) + "</ol>"
+        self._panel(body, span=span, label=label, title=title, cls="rk-text")
+
+    def info(self, pairs, *, decision: str | None = None, span: int | None = None, label: str = "本报告",
+             title: str | None = None) -> None:
+        """Facts about the note (data, split, label, method, status) and the decision asked of the reader."""
+        items = pairs.items() if isinstance(pairs, dict) else pairs
+        body = '<dl class="rk-defs">' + "".join(f"<dt>{inline(k)}</dt><dd>{inline(v)}</dd>" for k, v in items) + "</dl>"
+        if decision:
+            body += f'<div class="rk-decide"><b>需要决策</b>{inline(decision)}</div>'
+        self._panel(body, span=span, label=label, title=title, cls="rk-info")
 
     # ---- tables --------------------------------------------------------------------------------
-    def table(self, data, columns=None, *, title: str | None = None, subtitle: str | None = None,
-              source: str | None = None, fmt: dict | None = None, best: dict | None = None,
-              bars=None, delta: dict | None = None, highlight=None, index: bool = False,
-              numbered: bool = True, cls: str = "") -> str:
-        """data: list of dicts, list of lists (+ columns), or a pandas DataFrame.
-        fmt   {column: ".3f" | ",.0f" | "+.1%" | callable}   number format per column
-        best  {column: "max" | "min"}                       mark the best value (bold + dot)
-        bars  [column, ...]                                 inline magnitude bar in the cell
-        delta {column: "up" | "down"}                       colour signed values: green when better
-        highlight [row index, ...]                          tint whole rows
-        Cells may be Badge(...), Raw(...), numbers or strings (inline markup). A row given as the string
-        "## 标签" becomes a group-header row. Returns the label ("表 n") or "" when numbered=False."""
+    def table(self, data, columns=None, *, span: int | None = None, title: str | None = None,
+              subtitle: str | None = None, source: str | None = None, fmt: dict | None = None,
+              best: dict | None = None, bars=None, delta: dict | None = None, heat: dict | None = None,
+              spark=None, highlight=None, total=None, index: bool = False, numbered: bool = True, cls: str = "") -> str:
+        """Table panel. data: list of dicts, list of lists (+ columns), or a pandas DataFrame.
+        fmt   {column: ".3f" | ",.0f" | "+.1%" | callable}  number format per column
+        best  {column: "max" | "min"}                      mark the best value
+        bars  [column, ...]                                inline magnitude bar
+        delta {column: "up" | "down"}                      signed values green when better, red when worse
+        heat  {column: "diverging" | "sequential"}         cell background by value (diverging: green/red)
+        spark [column, ...]                                cells hold lists of numbers -> sparkline
+        highlight / total [row index, ...]                 emphasised rows / total rows (top rule)
+        A row given as "## 标签" is a group header. Cells may be Badge, Raw, numbers or strings.
+        Returns "表 n" (or "" when numbered=False)."""
         cols, rows = _tabular(data, columns, index)
-        fmt, best, delta = fmt or {}, best or {}, delta or {}
-        bars, hl = set(bars or ()), set(highlight or ())
+        fmt, best, delta, heat = fmt or {}, best or {}, delta or {}, heat or {}
+        bars, sparks, hl, tot = set(bars or ()), set(spark or ()), set(highlight or ()), set(total or ())
         body_rows = [r for r in rows if not isinstance(r, str)]
-        numeric = {c: all(_is_num(r[j]) or r[j] is None for r in body_rows) and any(_is_num(r[j]) for r in body_rows)
+        numeric = {c: (all(_is_num(r[j]) or r[j] is None for r in body_rows) and any(_is_num(r[j]) for r in body_rows)) or c in sparks
                    for j, c in enumerate(cols)}
-        best_val = {}
-        for c, how in best.items():
+
+        def colvals(c):
             j = cols.index(c)
-            vals = [r[j] for r in body_rows if _is_num(r[j])]
-            if vals:
-                best_val[c] = max(vals) if how == "max" else min(vals)
-        bar_max = {c: max([abs(r[cols.index(c)]) for r in body_rows if _is_num(r[cols.index(c)])] or [1]) or 1 for c in bars}
+            return [r[j] for r in body_rows if _is_num(r[j])]
+        best_val = {c: (max if how == "max" else min)(colvals(c)) for c, how in best.items() if colvals(c)}
+        bar_max = {c: max([abs(v) for v in colvals(c)] or [1]) or 1 for c in bars}
+        heat_rng = {c: max([abs(v) for v in colvals(c)] or [1]) or 1 for c in heat}
+        heat_lo = {c: min(colvals(c) or [0]) for c in heat}
         head = "".join(f'<th{" class=rk-r" if numeric[c] else ""} scope="col">{inline(c)}</th>' for c in cols)
-        out = []
-        ri = -1
+        out, ri = [], -1
         for r in rows:
             if isinstance(r, str):
                 out.append(f'<tr class="rk-group"><td colspan="{len(cols)}">{inline(r.lstrip("#").strip())}</td></tr>')
@@ -344,14 +398,25 @@ class Report:
             ri += 1
             tds = []
             for j, c in enumerate(cols):
-                v, classes = r[j], []
-                if _is_num(v):
+                v, classes, style = r[j], [], ""
+                if c in sparks and isinstance(v, list):
+                    classes.append("rk-r")
+                    s = f'<div class="rk-spark" data-spark="{esc(_json(v))}"></div>'
+                elif _is_num(v):
                     classes.append("rk-r")
                     s = esc(fmt_num(v, fmt.get(c)))
                     if c in best_val and v == best_val[c]:
                         classes.append("rk-best")
                     if c in delta and v != 0:
                         classes.append("rk-tg" if (v > 0) == (delta[c] == "up") else "rk-tb")
+                    if c in heat:
+                        classes.append("rk-heat")
+                        if heat[c] == "sequential":
+                            span_ = (max(colvals(c)) - heat_lo[c]) or 1
+                            style = f' style="background:color-mix(in srgb,var(--rk-s1) {8 + 40 * (v - heat_lo[c]) / span_:.0f}%,transparent)"'
+                        else:
+                            tone = "up" if v >= 0 else "down"
+                            style = f' style="background:color-mix(in srgb,var(--rk-{tone}) {6 + 36 * abs(v) / heat_rng[c]:.0f}%,transparent)"'
                     if c in bars:
                         w = 100 * abs(v) / bar_max[c]
                         s = f'<span class="rk-cellbar"><span class="rk-track"><i style="width:{w:.1f}%"></i></span>{s}</span>'
@@ -363,63 +428,51 @@ class Report:
                     if numeric[c]:
                         classes.append("rk-r")
                 ca = f' class="{" ".join(classes)}"' if classes else ""
-                tds.append(f"<td{ca}>{s}</td>")
-            rc = ' class="rk-hl"' if ri in hl else ""
-            out.append(f"<tr{rc}>{''.join(tds)}</tr>")
+                tds.append(f"<td{ca}{style}>{s}</td>")
+            rc = " ".join(x for x in ("rk-hl" if ri in hl else "", "rk-total" if ri in tot else "") if x)
+            tr = f'<tr class="{rc}">' if rc else "<tr>"
+            out.append(tr + "".join(tds) + "</tr>")
         label = ""
         if numbered:
             self._tab += 1
             label = f"表 {self._tab}"
-        cap = self._caption(label, title, subtitle) if (title or label) else ""
-        src = f'<div class="rk-source">{inline(source)}</div>' if source else ""
-        self._blocks.append(f'<div class="rk-tbl {esc(cls)}">{cap}<div class="rk-tablewrap"><table class="rk-table">'
-                            f"<thead><tr>{head}</tr></thead><tbody>{''.join(out)}</tbody></table></div>{src}</div>")
+        wide = " rk-wide" if len(cols) >= 5 else ""          # phones: scroll sideways instead of crushing columns
+        extra = f" {esc(cls)}" if cls else ""
+        body = (f'<div class="rk-tablewrap"><table class="rk-table{wide}{extra}"><thead><tr>{head}</tr></thead>'
+                f"<tbody>{''.join(out)}</tbody></table></div>")
+        self._panel(body, span=span, label=label, title=title, subtitle=subtitle, source=source, cls="rk-tbl")
         return label
 
-    def actions(self, items, title: str | None = None) -> str:
+    def actions(self, items, title: str | None = None, *, span: int | None = None) -> str:
         """Next steps: list of dicts with 事项/item, 负责人/owner, 时间/due, 状态/status (any subset).
         Status strings in ACTION_TONES get a badge (完成, 进行中, 未开始, 阻塞, 有风险, 待定)."""
         keys = [("事项", "item"), ("负责人", "owner"), ("时间", "due"), ("状态", "status")]
         present = [(zh, en) for zh, en in keys if any(zh in i or en in i for i in items)]
         rows = []
         for n, i in enumerate(items, 1):
-            row = [f"{n}"]
+            row = [f"{n:02d}"]
             for zh, en in present:
                 v = i.get(zh, i.get(en))
-                if zh == "状态" and isinstance(v, str):
-                    v = Badge(v, ACTION_TONES.get(v, "neutral"))
-                row.append(v)
+                row.append(Badge(v, ACTION_TONES.get(v, "neutral")) if zh == "状态" and isinstance(v, str) else v)
             rows.append(row)
-        return self.table(rows, ["#"] + [zh for zh, _ in present], title=title, numbered=False, cls="rk-actions")
+        return self.table(rows, ["#"] + [zh for zh, _ in present], title=title, numbered=False, span=span, cls="rk-actions")
 
     # ---- figures -------------------------------------------------------------------------------
-    def _caption(self, label, title, subtitle):
-        return ('<div class="rk-cap">' + (f'<span class="rk-capn">{esc(label)}</span>' if label else "")
-                + (f'<span class="rk-capt">{inline(title)}</span>' if title else "")
-                + (f'<span class="rk-caps">{inline(subtitle)}</span>' if subtitle else "") + "</div>")
-
-    def _figure(self, inner: str, title, subtitle, source, numbered) -> str:
+    def chart(self, spec: dict, title: str | None = None, *, span: int | None = None, subtitle: str | None = None,
+              source: str | None = None, numbered: bool = True) -> str:
+        """Chart panel from reportkit.charts. title = the takeaway; subtitle = what is plotted, units, period;
+        source = data and conditions. Returns "图 n"."""
         label = ""
         if numbered:
             self._fig += 1
             label = f"图 {self._fig}"
-        src = f'<div class="rk-source">{inline(source)}</div>' if source else ""
-        self._blocks.append(f'<figure class="rk-fig"><div class="rk-fighead">{self._caption(label, title, subtitle)}</div>'
-                            f"{inner}{src}</figure>")
+        self._panel(f'<div class="rk-chart"><script type="application/json">{_json(spec)}</script></div>',
+                    span=span, label=label, title=title, subtitle=subtitle, source=source, cls="rk-fig")
         return label
 
-    def chart(self, spec: dict, title: str | None = None, *, subtitle: str | None = None,
-              source: str | None = None, numbered: bool = True) -> str:
-        """A chart from reportkit.charts (line, bar, hist, heatmap, scatter, roc, calibration).
-        Title = the takeaway ("加平方项后 AUC 只多 0.002"), subtitle = what is plotted and units,
-        source = data and conditions. Returns "图 n"."""
-        inner = f'<div class="rk-chart"><script type="application/json">{_json_script(spec)}</script></div>'
-        return self._figure(inner, title, subtitle, source, numbered)
-
-    def figure(self, fig, title: str | None = None, *, subtitle: str | None = None, source: str | None = None,
-               numbered: bool = True) -> str:
-        """Embed a matplotlib figure (as SVG) or an SVG string. Call reportkit.use_matplotlib_theme() first
-        so fonts and colours match. Static: no tooltip, no table view."""
+    def figure(self, fig, title: str | None = None, *, span: int | None = None, subtitle: str | None = None,
+               source: str | None = None) -> str:
+        """Embed a matplotlib figure (SVG) or an SVG string, static. Call use_matplotlib_theme() first."""
         if hasattr(fig, "savefig"):
             buf = io.StringIO()
             fig.savefig(buf, format="svg", bbox_inches="tight")
@@ -427,62 +480,58 @@ class Report:
         else:
             svg = str(fig)
         svg = re.sub(r"^.*?(<svg)", r"\1", svg, flags=re.S)
-        return self._figure(f'<div class="rk-plate">{svg}</div>', title, subtitle, source, numbered)
+        self._fig += 1
+        self._panel(f'<div class="rk-plate">{svg}</div>', span=span,
+                    label=f"图 {self._fig}", title=title, subtitle=subtitle, source=source, cls="rk-fig")
+        return f"图 {self._fig}"
 
-    def image(self, path, title: str | None = None, *, alt: str = "", subtitle: str | None = None,
-              source: str | None = None, numbered: bool = True) -> str:
-        """Embed an image file as a data URI (keeps the report a single file)."""
+    def image(self, path, title: str | None = None, *, span: int | None = None, alt: str = "",
+              subtitle: str | None = None, source: str | None = None) -> str:
+        """Embed an image file as a data URI (keeps the note a single file)."""
         p = Path(path)
         mime = mimetypes.guess_type(p.name)[0] or "image/png"
         data = base64.b64encode(p.read_bytes()).decode()
-        return self._figure(f'<div class="rk-plate"><img src="data:{mime};base64,{data}" alt="{esc(alt or title or "")}"></div>',
-                            title, subtitle, source, numbered)
+        self._fig += 1
+        self._panel(f'<div class="rk-plate"><img src="data:{mime};base64,{data}" alt="{esc(alt or title or "")}"></div>',
+                    span=span, label=f"图 {self._fig}", title=title, subtitle=subtitle, source=source, cls="rk-fig")
+        return f"图 {self._fig}"
 
-    @contextlib.contextmanager
-    def cols(self, n: int = 2):
-        """Side-by-side figures: `with r.cols(2): r.chart(...); r.chart(...)` (one column on phones)."""
-        self._blocks.append(f'<div class="rk-cols" style="--n:{int(n)}">')
-        try:
-            yield
-        finally:
-            self._blocks.append("</div>")
-
-    # ---- back matter ---------------------------------------------------------------------------
     def changelog(self, entries) -> None:
         """[(版本, 日期, 说明), ...], newest first. Shown in the footer."""
         self._changelog = list(entries)
 
     # ---- output --------------------------------------------------------------------------------
-    def _uses_math(self, body: str) -> bool:
-        return self._math or 'class="rk-im"' in body
-
     def render(self) -> str:
         self._close()
         body = "".join(self._blocks)
-        css = (ASSETS / "theme.css").read_text(encoding="utf8")
-        js = (ASSETS / "theme.js").read_text(encoding="utf8")
         st = STATUS.get(self.status) if self.status else None
-        kind = "".join(f"<span>{esc(x)}</span>" for x in (self.kind, self.doc_id) if x)
-        eyebrow = (f'<div class="rk-eyebrow"><span class="rk-kind">{kind}</span>'
-                   + (f'<span class="rk-status {st[1]}">{st[0]}</span>' if st else "") + "</div>")
-        meta = ('<dl class="rk-meta">' + "".join(f"<div><dt>{esc(k)}</dt><dd>{inline(v)}</dd></div>"
-                                                 for k, v in self.meta.items()) + "</dl>") if self.meta else ""
-        head = (f'<header class="rk-head">{eyebrow}<h1 class="rk-title">{inline(self.title)}</h1>'
-                + (f'<p class="rk-subtitle">{inline(self.subtitle)}</p>' if self.subtitle else "") + meta + "</header>")
-        foot = []
+        right = [f'<span class="rk-dim rk-hide-s">{esc(x)}</span>' for x in (self.date, self.version) if x]
+        if st:
+            right.append(f'<span class="rk-status {st[1]}">{st[0]}</span>')
+        right.append('<button type="button" data-rk="theme" aria-label="切换深浅色">深浅色</button>'
+                     '<button type="button" data-rk="print" class="rk-hide-s">打印 / PDF</button>')
+        left = '<span class="rk-brandmark"></span>' + f'<span class="rk-brand">{esc(self.kind)}</span>'
+        if self.doc_id:
+            left += f'<span class="rk-sep rk-hide-s"></span><span class="rk-dim rk-hide-s">{esc(self.doc_id)}</span>'
+        kick = ('<div class="rk-kicker">' + "".join(f"<span>{esc(k)}</span>" for k in self.kicker) + "</div>") if self.kicker else ""
+        byline = ('<dl class="rk-byline">' + "".join(f"<div><dt>{esc(k)}</dt><dd>{inline(v)}</dd></div>" for k, v in self.meta.items())
+                  + "</dl>") if self.meta else ""
+        hero = (f'<header class="rk-hero">{kick}<h1 class="rk-title">{inline(self.title)}</h1>'
+                + (f'<p class="rk-dek">{inline(self.dek)}</p>' if self.dek else "") + byline + "</header>")
+        if self._sec or self._app:          # sticky section index, right before the first section
+            i = body.find('<section class="rk-sec')
+            body = body[:i] + '<nav class="rk-nav" aria-label="章节"></nav>' + body[i:]
+        log = ""
         if self._changelog:
-            rows = "".join(f"<tr><td>{esc(v)}</td><td class=\"rk-tnum\">{esc(d)}</td><td>{inline(t)}</td></tr>"
-                           for v, d, t in self._changelog)
-            foot.append('<div class="rk-tbl"><div class="rk-cap"><span class="rk-capt">版本记录</span></div>'
-                        '<div class="rk-tablewrap"><table class="rk-table"><thead><tr><th>版本</th><th>日期</th><th>说明</th></tr>'
-                        f"</thead><tbody>{rows}</tbody></table></div></div>")
+            rows = "".join(f'<tr><td>{esc(v)}</td><td class="rk-tnum">{esc(d)}</td><td>{inline(t)}</td></tr>' for v, d, t in self._changelog)
+            log = ('<div class="rk-pl">版本记录</div><table class="rk-table"><thead><tr><th>版本</th><th>日期</th><th>说明</th></tr></thead>'
+                   f"<tbody>{rows}</tbody></table>")
         gen = self.generated or _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
-        if self.footer:
-            foot.append(f"<p>{inline(self.footer)}</p>")
-        foot.append(f'<p>由 reportkit {__version__} 生成 · {esc(gen)}</p>')
-        use_katex = self.katex == "cdn" or (self.katex == "auto" and self._uses_math(body))
+        meta = (f"<p>{inline(self.footer)}</p>" if self.footer else "") + f"<p>由 reportkit {__version__} 生成 · {esc(gen)}</p>"
+        use_katex = self.katex == "cdn" or (self.katex == "auto" and (self._math or 'class="rk-im"' in body))
         katex = (f'<link rel="stylesheet" href="{KATEX}/katex.min.css">\n<script defer src="{KATEX}/katex.min.js"></script>\n'
                  if use_katex else "")
+        title = re.sub(r"[*`$]", "", self.title)
         return f"""<!doctype html>
 <html lang="{esc(self.lang)}">
 <head>
@@ -490,24 +539,21 @@ class Report:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="generator" content="reportkit {__version__}">
 <meta name="robots" content="noindex, nofollow">
-<title>{esc(re.sub(r"[*`$]", "", self.title))}</title>
+<title>{esc(title)}</title>
 <script>{EARLY_JS}</script>
 <style>
-{css}
+{theme_css()}
 </style>
 {katex}</head>
 <body class="rk">
-<div class="rk-tools"><button type="button" data-rk="theme" aria-label="切换深浅色">◐ 深浅色</button><button type="button" data-rk="print">打印 / PDF</button></div>
-<div class="rk-page">
-<nav class="rk-toc" aria-label="目录"></nav>
-<article class="rk-paper">
-{head}
+<div class="rk-mast"><div class="rk-mast-in"><div class="rk-mast-l">{left}</div><div class="rk-mast-r">{"".join(right)}</div></div></div>
+<main class="rk-sheet">
+{hero}
 {body}
-<footer class="rk-foot">{"".join(foot)}</footer>
-</article>
-</div>
+<footer class="rk-foot"><div class="rk-foot-log">{log}</div><div class="rk-foot-meta">{meta}</div></footer>
+</main>
 <script>
-{js}
+{theme_js()}
 </script>
 </body>
 </html>
@@ -522,7 +568,7 @@ class Report:
 
 def _tabular(data, columns, index):
     """-> (column names, rows as lists). Accepts DataFrame, list of dicts, list of lists."""
-    if hasattr(data, "columns") and hasattr(data, "to_dict"):           # pandas DataFrame
+    if hasattr(data, "columns") and hasattr(data, "to_dict"):
         cols = [str(c) for c in data.columns]
         rows = [[_py(v) for v in r] for r in data.itertuples(index=False, name=None)]
         if index:
@@ -541,10 +587,8 @@ def _tabular(data, columns, index):
 
 
 def inline_assets(src_html: str) -> str:
-    """Replace <link href="...theme.css"> and <script src="...theme.js"></script> with the files' content,
-    so a hand-written report (see assets/template.html) becomes a single file."""
-    css = (ASSETS / "theme.css").read_text(encoding="utf8")
-    js = (ASSETS / "theme.js").read_text(encoding="utf8")
+    """Replace <link href="...theme.css"> and <script src="...theme.js"></script> with the files' content
+    (fonts as data URIs), so a hand-written note (assets/template.html) becomes a single file."""
+    css, js = theme_css(), theme_js()
     out = re.sub(r'<link[^>]+href="[^"]*theme\.css"[^>]*>', lambda m: f"<style>\n{css}\n</style>", src_html)
-    out = re.sub(r'<script[^>]+src="[^"]*theme\.js"[^>]*>\s*</script>', lambda m: f"<script>\n{js}\n</script>", out)
-    return out
+    return re.sub(r'<script[^>]+src="[^"]*theme\.js"[^>]*>\s*</script>', lambda m: f"<script>\n{js}\n</script>", out)

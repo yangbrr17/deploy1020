@@ -16,7 +16,7 @@
 | `docs/signal-model/dl/*.md` | 每个深度学习模型一页 |
 | `src/arrivals/` | 到达分布检验包（H1–H9），入口 `report.py` |
 | `src/execrl/` | 执行决策包（bandit、离线 RL、PPO），入口 `train.py` |
-| `src/reportkit/` | 交付报告主题：`Report` 生成单文件 HTML 报告，`charts` 生成图表 spec，`assets/` 里是 theme.css、theme.js、空白模板；规范在 `docs/report-theme/README.md` |
+| `src/reportkit/` | 交付报告主题（研报版式）：`Report` 生成单文件 HTML，`charts` 生成图表 spec，`assets/` 里是 theme.css、theme.js、空白模板和 Inter 字体；规范在 `docs/report-theme/README.md` |
 | `src/tests/` | pytest 测试 |
 | `site/build.py` | 把 Markdown 和 `src/**/*.py` 生成静态站点；GitHub Actions 推送后自动发布到 Pages |
 | `site/encrypt_page.py`、`site/encrypted/` | 需要密码的笔记页：只提交密文 JSON，Markdown 原文和密码都不进仓库 |
@@ -53,11 +53,13 @@ python site/build.py                                         # builds _site/ (ne
 
 所有对内的报告都用 `src/reportkit` 生成，不要手写 CSS、不要引入其他前端库或图表库。完整规范（结构、写作规则、选图、组件、图表 spec、交付检查、提示词）在 `docs/report-theme/README.md`，示例在 `src/reportkit/example.py`。要点：
 
-- 顺序固定：`Report(...)` → `summary` → `kpis` → `section`…（含「风险与局限」）→ `actions` → `appendix` → `changelog` → `save`。
-- 标题和每个图表标题写结论；结论区 3–5 条，每条以一句 `**加粗**` 的结论开头。
+- 顺序固定：`Report(...)` → `kpis` → 一行 `takeaways`（span 8）+ `info`（span 4）→ `section(..., lead=)` 和它的若干行 → … → `actions` → `appendix` → `changelog` → `save`。
+- 版式：每个 section 由 `with r.row(height=...)` 组成，行内面板的 `span` 加起来必须等于 12（不等会报错）；同一行只放互相关联、同一层级的内容；解释文字用 `r.text` / `r.callout` 放进行里。
+- 报告标题、章节导语、每个图表标题写结论；单位写在 `subtitle`，条件写在 `source`；要点 3–5 条，每条以一句 `**加粗**` 的结论开头。
 - 数字都从变量格式化，不手填；图表编号用 `r.chart` / `r.table` 的返回值引用。
 - 图表只用 `reportkit.charts`；同一个对象在所有图里用同一个系列名（颜色跟着名字走）；不用饼图和双 y 轴。
-- 改主题时同时改 `assets/theme.css`、`assets/theme.js`、规范页第 5–7 节和 `src/tests/test_reportkit.py`；改完用浏览器看浅色、深色、手机宽度和打印预览。
+- 改主题时同时改 `assets/theme.css`、`assets/theme.js`、`assets/template.html`、规范页第 5–8 节和 `src/tests/test_reportkit.py`；改完用浏览器看浅色、深色（终端风格）、手机宽度和打印预览，并检查图内文字没有重叠、同一行的图顶和来源线对齐。
+- CSS 类名都以 `rk-` 开头，新增前先搜一遍：SVG 元素也会吃到同名类的 `width` / `height`（`rk-mark` 曾经和页头的小方块撞名，柱子被压成 10×10）。
 
 ## 待办（按优先级）
 
@@ -76,8 +78,9 @@ python site/build.py                                         # builds _site/ (ne
 5. 风险敏感评估：在 `evaluate.py` 加 CVaR 的估计和 bootstrap 置信区间。
 
 **交付报告（`src/reportkit/`）**
-1. 图表类型：箱线图（分组分布）、带误差线的点图（区间估计）、小倍数（同一图按组拆开）。
+1. 图表类型：带误差线的点图（区间估计）、堆叠面积图、排名变化图（bump）。
 2. `Report.table` 支持长表折叠（超过 N 行时显示前 N 行和「展开」）。
+3. 打印：长表跨页时重复表头。
 
 **机器学习和深度学习**
 1. 把 `ml-pipeline.md` 和 `dl/*.md` 里的代码整理成包（例如 `src/sigml/`、`src/lobdl/`），目录风格照 `execrl`：`config.py`、`data.py`、模型模块、`train.py`、测试。

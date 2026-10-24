@@ -6,7 +6,7 @@
 |---|---|---|
 | [`arrivals/`](arrivals/__init__.py) | 事件到达分布的假设检验 H1–H9：数据清洗、检验统计量、ACD、Hawkes、Cont–de Larrard，输出一张结果表 | [`arrival-tests.md`](../docs/signal-model/arrival-tests.md)、[`event-arrivals.md`](../docs/signal-model/event-arrivals.md) |
 | [`execrl/`](execrl/__init__.py) | 执行切片的决策：宏动作 bandit + DR、约束 FQI、FQE、IQL、PPO，统一的配置、数据、策略接口和训练函数 | [`reinforcement-learning.md`](../docs/signal-model/reinforcement-learning.md) 第 13 节 |
-| [`reportkit/`](reportkit/__init__.py) | 交付报告主题：单文件 HTML 报告（结论、指标卡、编号章节、表格、交互图表、打印成 A4） | [`report-theme/README.md`](../docs/report-theme/README.md) |
+| [`reportkit/`](reportkit/__init__.py) | 交付报告主题（研报版式）：单文件 HTML，标题即结论、指标条、12 栏对齐的面板、交互图表、打印成 A4 | [`report-theme/README.md`](../docs/report-theme/README.md) |
 
 ## 安装和自检
 
@@ -15,7 +15,7 @@
 ```bash
 pip install numpy scipy pandas scikit-learn lightgbm pytest
 pip install torch --index-url https://download.pytorch.org/whl/cpu      # only for IQL / PPO
-PYTHONPATH=src python -m pytest -q src/tests                            # 25 tests, about 30 s
+PYTHONPATH=src python -m pytest -q src/tests                            # 26 tests, about 45 s
 ```
 
 ## arrivals：文件一览
@@ -85,11 +85,11 @@ PYTHONPATH=src python -m execrl.train all --out runs/all --threads 8
 
 | 文件 | 内容 |
 |---|---|
-| [`reportkit/report.py`](reportkit/report.py) | `Report`：抬头、结论、指标卡、章节编号、提示框、表格、图表、下一步、附录、版本记录，输出单个 HTML |
-| [`reportkit/charts.py`](reportkit/charts.py) | 图表 spec：line、bar、hist、heatmap、scatter、roc、calibration |
+| [`reportkit/report.py`](reportkit/report.py) | `Report`：页头、标题区、指标条、要点、章节、12 栏的行和面板（图、表、文字、提示）、下一步、附录、版本记录，输出单个 HTML |
+| [`reportkit/charts.py`](reportkit/charts.py) | 图表 spec：line、bar、waterfall、dumbbell、hist、box、heatmap、scatter、multiples、roc、calibration |
 | [`reportkit/mpl.py`](reportkit/mpl.py) | 和主题一致的 matplotlib 样式 |
 | [`reportkit/example.py`](reportkit/example.py) | 网站上的示例报告（合成数据） |
-| `reportkit/assets/` | `theme.css`、`theme.js`（图表渲染、目录、提示、表格视图）、`template.html`（手写路线） |
+| `reportkit/assets/` | `theme.css`、`theme.js`（图表渲染、章节导航、提示、数据视图、打印重排）、`template.html`（手写路线）、`fonts/`（Inter，OFL） |
 
 ```bash
 PYTHONPATH=src python -m reportkit example report.html

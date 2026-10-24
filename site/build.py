@@ -9,7 +9,7 @@ that is NOT committed) become notes/<slug>.html; the browser decrypts them with 
 Python files under src/ become source pages (foo.py -> foo.py.html) with a table of their top-level
 functions and classes; Markdown links to a .py file are rewritten to that page.
 Report theme: report/example.html is built by src/reportkit (needs numpy) and report/ also gets theme.css,
-theme.js and template.html; NAV entries starting with "@" link to such built files directly.
+theme.js, template.html and fonts/; NAV entries starting with "@" link to such built files directly.
 """
 import ast
 import html
@@ -327,9 +327,7 @@ def page_html(src, title, body, has_math, has_mermaid, footer, extra_js=""):
 """
 
 
-BACK = ('<div class="rk-tools" style="left:14px;right:auto"><a href="../docs/report-theme/README.html" '
-        'style="font:12.5px/1 system-ui,sans-serif;color:var(--rk-ink-2);background:var(--rk-paper);'
-        'border:1px solid var(--rk-line-2);border-radius:7px;padding:7px 10px;text-decoration:none">← 规范与用法</a></div>')
+BACK = '<a class="rk-back rk-hide-s" href="../docs/report-theme/README.html">← 规范与用法</a><span class="rk-sep rk-hide-s"></span>'
 
 
 def build_reports():
@@ -340,9 +338,10 @@ def build_reports():
     out = OUT / "report"
     build_example(out / "example.html")
     page = (out / "example.html").read_text(encoding="utf8")
-    (out / "example.html").write_text(page.replace('<body class="rk">', '<body class="rk">\n' + BACK, 1), encoding="utf8")
+    (out / "example.html").write_text(page.replace('<div class="rk-mast-l">', '<div class="rk-mast-l">' + BACK, 1), encoding="utf8")
     for f in ("theme.css", "theme.js", "template.html"):
         shutil.copy(ASSETS / f, out / f)
+    shutil.copytree(ASSETS / "fonts", out / "fonts")
 
 
 def write(src, page):

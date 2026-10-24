@@ -3,7 +3,7 @@
     python -m reportkit example out.html           # build the example report (synthetic data, needs numpy)
     python -m reportkit template out.html          # copy the hand-written template, assets inlined
     python -m reportkit inline in.html out.html    # inline theme.css / theme.js into a hand-written report
-    python -m reportkit assets DIR                 # copy theme.css, theme.js, template.html into DIR
+    python -m reportkit assets DIR                 # copy theme.css, theme.js, template.html, fonts/ into DIR
 """
 import argparse
 import shutil
@@ -34,6 +34,7 @@ def main(argv=None):
         d.mkdir(parents=True, exist_ok=True)
         for f in ("theme.css", "theme.js", "template.html"):
             shutil.copy(ASSETS / f, d / f)
+        shutil.copytree(ASSETS / "fonts", d / "fonts", dirs_exist_ok=True)
     print(f"wrote {getattr(args, 'out', None) or args.dir}", file=sys.stderr)
 
 
