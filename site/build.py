@@ -8,8 +8,8 @@ Password-protected pages: site/encrypted/<slug>.json (made by site/encrypt_page.
 that is NOT committed) become notes/<slug>.html; the browser decrypts them with the password.
 Python files under src/ become source pages (foo.py -> foo.py.html) with a table of their top-level
 functions and classes; Markdown links to a .py file are rewritten to that page.
-Report theme: report/example.html is built by src/reportkit (needs numpy) and report/ also gets theme.css,
-theme.js, template.html and fonts/; NAV entries starting with "@" link to such built files directly.
+Report theme: report/example.html and report/example-en.html are built by src/reportkit (needs numpy) and
+report/ also gets theme.css, theme.js, the two templates and fonts/; NAV entries starting with "@" link to such built files directly.
 """
 import ast
 import html
@@ -29,8 +29,10 @@ NAV = [
     ("", [("README.md", "首页", 0)]),
     ("交付报告", [
         ("docs/report-theme/README.md", "报告主题：规范与用法", 0),
-        ("@report/example.html", "示例报告 ↗", 1),
-        ("@report/template.html", "空白模板 ↗", 1),
+        ("@report/example.html", "示例报告（中文）↗", 1),
+        ("@report/example-en.html", "Example note (English) ↗", 1),
+        ("@report/template.html", "空白模板（中文）↗", 1),
+        ("@report/template-en.html", "Blank template (English) ↗", 1),
     ]),
     ("信号建模", [
         ("docs/signal-model/modeling-guide.md", "建模总览：输入、输出、改进路线", 0),
@@ -327,7 +329,8 @@ def page_html(src, title, body, has_math, has_mermaid, footer, extra_js=""):
 """
 
 
-BACK = '<a class="rk-back rk-hide-s" href="../docs/report-theme/README.html">← 规范与用法</a><span class="rk-sep rk-hide-s"></span>'
+BACK = {"zh": '<a class="rk-back rk-hide-s" href="../docs/report-theme/README.html">← 规范与用法</a><span class="rk-sep rk-hide-s"></span>',
+        "en": '<a class="rk-back rk-hide-s" href="../docs/report-theme/README.html">← Style guide</a><span class="rk-sep rk-hide-s"></span>'}
 
 
 def build_reports():
@@ -336,10 +339,11 @@ def build_reports():
     from reportkit.example import build as build_example
     from reportkit.report import ASSETS
     out = OUT / "report"
-    build_example(out / "example.html")
-    page = (out / "example.html").read_text(encoding="utf8")
-    (out / "example.html").write_text(page.replace('<div class="rk-mast-l">', '<div class="rk-mast-l">' + BACK, 1), encoding="utf8")
-    for f in ("theme.css", "theme.js", "template.html"):
+    for lang, name, other in (("zh", "example.html", {"en": "example-en.html"}), ("en", "example-en.html", {"zh": "example.html"})):
+        build_example(out / name, lang=lang, translations=other)       # each note links to the other in its masthead
+        page = (out / name).read_text(encoding="utf8")
+        (out / name).write_text(page.replace('<div class="rk-mast-l">', '<div class="rk-mast-l">' + BACK[lang], 1), encoding="utf8")
+    for f in ("theme.css", "theme.js", "template.html", "template-en.html"):
         shutil.copy(ASSETS / f, out / f)
     shutil.copytree(ASSETS / "fonts", out / "fonts")
 

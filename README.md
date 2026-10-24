@@ -27,7 +27,7 @@
 
 **交付报告主题**（[`docs/report-theme/README.md`](docs/report-theme/README.md)）
 
-内部报告的统一格式（研报版式）：单个 HTML 文件，标题即结论，指标条，12 栏对齐的图表面板，深色是终端风格，能打印成 A4。网页上有[示例报告](report/example.html)和空白模板；代码在 [`src/reportkit/`](src/reportkit/__init__.py)。
+内部报告的统一格式（研报版式）：单个 HTML 文件，标题即结论，指标条，12 栏对齐的图表面板，深色是终端风格，能打印成 A4，有中文和英文两版。网页上有示例报告（[中文](report/example.html)、[English](report/example-en.html)）和空白模板；代码在 [`src/reportkit/`](src/reportkit/__init__.py)。
 
 **代码**（[`src/README.md`](src/README.md)）
 
@@ -36,7 +36,7 @@
 | [`src/arrivals/`](src/arrivals/__init__.py) | 到达分布检验 H1–H9：清洗、统计量、ACD、Hawkes、Cont–de Larrard、结果表和命令行 |
 | [`src/execrl/`](src/execrl/__init__.py) | 执行决策：配置、动作和屏蔽、奖励、数据容器、玩具模拟器、bandit + DR、约束 FQI、FQE、IQL、PPO、训练函数和命令行 |
 | [`src/reportkit/`](src/reportkit/__init__.py) | 交付报告主题：`Report`、图表 spec、主题 CSS / JS、空白模板 |
-| [`src/tests/`](src/tests/test_execrl.py) | 26 个 pytest 测试：`PYTHONPATH=src python -m pytest -q src/tests` |
+| [`src/tests/`](src/tests/test_execrl.py) | 29 个 pytest 测试：`PYTHONPATH=src python -m pytest -q src/tests` |
 
 「笔记（需密码）」栏目里的页面在浏览器里用密码解密，仓库里只有密文（`site/encrypted/`，生成方法见 `site/encrypt_page.py`）。
 

@@ -3,7 +3,7 @@
      1. builds the sticky section index (.rk-nav) from the section heads;
      2. draws every <div class="rk-chart"> from the JSON spec in its child <script type="application/json">;
         types: line, bar, waterfall, dumbbell, hist, heatmap, scatter, box, multiples (+ sparklines .rk-spark);
-     3. adds tooltips (hover, arrow keys) and the "数据" table view to every chart panel;
+     3. adds tooltips (hover, arrow keys) and the "数据" / "Data" table view to every chart panel;
      4. adds copy buttons to code and math, renders math with KaTeX when it is on the page;
      5. wires the theme / print buttons; before printing, lays the sheet out at A4 width and redraws.
    House style (docs/report-theme/README.md): value axis on the right, solid hairline grid, ink zero line,
@@ -13,6 +13,19 @@
   'use strict';
   var NS = 'http://www.w3.org/2000/svg';
   var doc = document, root = doc.documentElement;
+  // interface words; the page language comes from <html lang> ("en..." -> English, anything else -> Chinese)
+  var LANG = /^en/i.test(root.getAttribute('lang') || '') ? 'en' : 'zh';
+  var L = {
+    zh: { data: '数据', dataTip: '显示图背后的数字', pos: '为正', neg: '为负', total: '合计', up: '增加', down: '减少', change: '变化',
+      cum: '累计', diff: '差', fit: '最小二乘拟合', slope: '斜率', sep: '，', max: '最大', q3: '上四分位', median: '中位数', q1: '下四分位',
+      min: '最小', n: '样本', category: '类别', step: '步骤', bin: '区间', point: '点', group: '组', bad: '图表数据无法读取。',
+      fail: '图表渲染失败：', copy: '复制', copyTex: '复制 LaTeX', copied: '已复制' },
+    en: { data: 'Data', dataTip: 'Show the numbers behind the chart', pos: 'Positive', neg: 'Negative', total: 'Total', up: 'Increase',
+      down: 'Decrease', change: 'Change', cum: 'Cumulative', diff: 'Difference', fit: 'Least-squares fit', slope: 'slope', sep: ', ',
+      max: 'Max', q3: 'Upper quartile', median: 'Median', q1: 'Lower quartile', min: 'Min', n: 'n', category: 'Category', step: 'Step',
+      bin: 'Bin', point: 'Point', group: 'Group', bad: 'Chart data could not be read.', fail: 'Chart failed to render: ', copy: 'Copy',
+      copyTex: 'Copy LaTeX', copied: 'Copied' }
+  }[LANG];
 
   /* ================================================================ utilities */
   function svg(tag, attrs, parent) {
@@ -55,6 +68,24 @@
     while (s.length > 1 && textWidth(s + '…', size, weight) > maxW) s = s.slice(0, -1);
     return s + '…';
   }
+
+  // category labels under columns: up to two lines, broken at spaces (Latin) or between characters (CJK)
+  function wrapLines(s, maxW, size, maxLines) {
+    s = String(s);
+    if (textWidth(s, size) <= maxW) return [s];
+    var tokens = /\s/.test(s) ? s.split(/(\s+)/) : s.split(''), lines = [], cur = '';
+    tokens.forEach(function (t) {
+      var nx = cur + t;
+      if (cur.trim() && textWidth(nx.trim(), size) > maxW) { lines.push(cur.trim()); cur = t.replace(/^\s+/, ''); } else cur = nx;
+    });
+    if (cur.trim()) lines.push(cur.trim());
+    if (lines.length > maxLines) lines = lines.slice(0, maxLines - 1).concat([ellipsize(lines.slice(maxLines - 1).join(' '), maxW, size)]);
+    return lines.map(function (l) { return ellipsize(l, maxW, size); });
+  }
+  function catLabels(g, x, y, s, maxW) {
+    wrapLines(s, maxW, 11.5, 2).forEach(function (l, i) { txt(g, x, y + i * 13, l, { 'text-anchor': 'middle', 'class': 'rk-cat' }); });
+  }
+  function needsTwo(labels, maxW) { return labels.some(function (c) { return textWidth(c, 11.5) > maxW; }); }
 
   /* ================================================================ numbers */
   // mini-language: "auto", ".2f", ",.0f", "+.1f", ".1%", "+.1%", ".2s" (K/M/B), ".2e", "int"
@@ -423,20 +454,24 @@
     // horizontal when names are long and do not fit under the columns; short period labels (D1, 2024Q1) thin out instead
     if (horiz == null) horiz = maxOf(catW.concat([0])) > Math.max(48, (W - 50) / Math.max(1, cats.length) - 8);
     var lg = single ? [] : series.map(function (s) { return { name: s.name, color: s._c, kind: 'rect' }; });
-    if (tone) lg = [{ name: '为正', color: 'var(--rk-up)', kind: 'rect' }, { name: '为负', color: 'var(--rk-down)', kind: 'rect' }];
+    if (tone) lg = [{ name: L.pos, color: 'var(--rk-up)', kind: 'rect' }, { name: L.neg, color: 'var(--rk-down)', kind: 'rect' }];
     legend(box, lg);
     var F, tip = tooltip(box), marks = [];
     if (!horiz) {
-      var top = labelsOn ? 18 : 8, bottom = 24;
+      // wrap only phrases (spaces, or 3+ CJK characters); short codes like D26 or 2024Q1 thin out instead
+      var band0 = (W - 50) / cats.length, phrases = cats.some(function (c) { return /\s/.test(c) || /[\u4e00-\u9fff]{3,}/.test(c); });
+      var wrap2 = phrases && needsTwo(cats, band0 - 6) && maxOf(catW) < 2 * (band0 - 6);
+      var top = labelsOn ? 18 : 8, bottom = 24 + (wrap2 ? 13 : 0);
       var y = linear(vmin, vmax, H - bottom, top, { ticks: yTicks(H, top, bottom) }), yf = tickFmt(y, spec.valueFormat);
       var x0 = 2, x1 = W - tickWidth(y, yf) - 14, band = (x1 - x0) / cats.length;
       var bw = Math.min(single || stacked ? 30 : 18, (band * 0.7 - gap * (nS - 1)) / nS);
       F = frame(box, W, H);
       rightAxis(F.grid, y, x0, x1, yf);
-      var every = Math.max(1, Math.ceil((maxOf(catW) + 10) / band));
+      var every = wrap2 ? 1 : Math.max(1, Math.ceil((maxOf(catW) + 10) / band));
       cats.forEach(function (c, ci) {
         var cx = x0 + band * (ci + 0.5), gw = bw * nS + gap * (nS - 1), bx = cx - gw / 2;
-        if (ci % every === 0) txt(F.grid, cx, H - bottom + 16, c, { 'text-anchor': 'middle', 'class': 'rk-cat' });
+        if (wrap2) catLabels(F.grid, cx, H - bottom + 16, c, band - 6);
+        else if (ci % every === 0) txt(F.grid, cx, H - bottom + 16, c, { 'text-anchor': 'middle', 'class': 'rk-cat' });
         var acc = { p: 0, n: 0 }, grp = [];
         series.forEach(function (s, si) {
           var v = s.values[ci]; if (!isNum(v)) return;
@@ -488,7 +523,7 @@
       F.el.classList.add('rk-hovering');
       marks.forEach(function (o) { o.grp.forEach(function (p) { p.classList.toggle('rk-dimmed', o !== m); }); });
       var rows = series.map(function (s) { return { color: colorOf(s, m.ci), rect: true, value: fmt(s.values[m.ci], vf), name: single ? null : s.name }; });
-      if (stacked) rows.push({ value: fmt(series.reduce(function (a, s) { return a + (isNum(s.values[m.ci]) ? s.values[m.ci] : 0); }, 0), vf), name: '合计' });
+      if (stacked) rows.push({ value: fmt(series.reduce(function (a, s) { return a + (isNum(s.values[m.ci]) ? s.values[m.ci] : 0); }, 0), vf), name: L.total });
       var k = scaleK(F.el, W);
       tip.show((m.cx != null ? m.cx : W * 0.55) * k, m.cy * k, String(cats[m.ci]), rows);
     }
@@ -507,11 +542,12 @@
     });
     var all = []; bars.forEach(function (b) { all.push(b.a, b.b); });
     var lo = spec.yMin != null ? spec.yMin : Math.min(0, minOf(all)), hi = spec.yMax != null ? spec.yMax : maxOf(all);
-    var top = 18, bottom = 24;
+    var wlabels = steps.map(function (s) { return s.label; }), wrapW = (W - 50) / steps.length - 6;
+    var top = 18, bottom = 24 + (needsTwo(wlabels, wrapW) ? 13 : 0);
     var y = linear(lo, hi, H - bottom, top, { nice: spec.yMin == null, ticks: yTicks(H, top, bottom) }), yf = tickFmt(y, vf);
     var x0 = 2, x1 = W - tickWidth(y, yf) - 14, band = (x1 - x0) / steps.length, bw = Math.min(46, band * 0.62);
     var upC = better === 'up' ? 'var(--rk-up)' : 'var(--rk-down)', dnC = better === 'up' ? 'var(--rk-down)' : 'var(--rk-up)';
-    legend(box, [{ name: '增加', color: upC, kind: 'rect' }, { name: '减少', color: dnC, kind: 'rect' }, { name: '合计', color: 'var(--rk-ink-2)', kind: 'rect' }]);
+    legend(box, [{ name: L.up, color: upC, kind: 'rect' }, { name: L.down, color: dnC, kind: 'rect' }, { name: L.total, color: 'var(--rk-ink-2)', kind: 'rect' }]);
     var F = frame(box, W, H), tip = tooltip(box), marks = [], y0 = H - bottom;
     rightAxis(F.grid, y, x0, x1, yf);
     baseline(F.grid, x0, x1, y0);
@@ -526,13 +562,13 @@
       }
       if (i < bars.length - 1) svg('line', { x1: r1(l + bw), x2: r1(x0 + band * (i + 1.5) - bw / 2), y1: px(yb), y2: px(yb), 'class': 'rk-conn' }, F.marks);
       txt(F.over, cx, t0 - 5, b.total ? fmt(b.b, vf) : signed(b.s.value, vf === 'auto' ? '.3f' : vf), { 'text-anchor': 'middle', 'class': 'rk-dl', style: b.total ? null : 'fill:' + color });
-      txt(F.grid, cx, y0 + 16, ellipsize(b.s.label, band - 4, 11.5), { 'text-anchor': 'middle', 'class': 'rk-cat' });
+      catLabels(F.grid, cx, y0 + 16, b.s.label, band - 6);
       marks.push({ i: i, cx: cx, cy: t0, hit: svg('rect', { x: x0 + band * i, y: top, width: band, height: y0 - top, 'class': 'rk-hit' }, F.over) });
     });
     function show(m) {
       var b = bars[m.i], k = scaleK(F.el, W);
-      tip.show(m.cx * k, (m.cy + 24) * k, b.s.label, b.total ? [{ value: fmt(b.b, vf), name: '合计' }] :
-        [{ value: signed(b.s.value, vf === 'auto' ? '.3f' : vf), name: '变化' }, { value: fmt(b.b, vf), name: '累计' }]);
+      tip.show(m.cx * k, (m.cy + 24) * k, b.s.label, b.total ? [{ value: fmt(b.b, vf), name: L.total }] :
+        [{ value: signed(b.s.value, vf === 'auto' ? '.3f' : vf), name: L.change }, { value: fmt(b.b, vf), name: L.cum }]);
     }
     marks.forEach(function (m) { m.hit.addEventListener('pointerenter', function () { show(m); }); });
     keyNav(F.el, marks.length, function (i) { show(marks[i]); }, function () { tip.hide(); });
@@ -543,7 +579,7 @@
     var cats = spec.categories || [], A = Object.assign({}, spec.a), B = Object.assign({}, spec.b), vf = spec.valueFormat || 'auto';
     if (spec.a.color) assignColors([A, B], null); else { A._c = 'var(--rk-gray)'; assignColors([B], null); }
     var all = nums(A.values).concat(nums(B.values));
-    var labW = Math.min(maxOf(cats.map(function (c) { return textWidth(c, 11.5); })) + 12, W * 0.36);
+    var labW = Math.min(maxOf(cats.map(function (c) { return textWidth(c, 11.5); })) + 12, W * 0.42);
     var valW = maxOf(all.map(function (v) { return textWidth(fmt(v, vf), 11.5, 700); })) + 12;
     var topH = 2, bottomH = 22, rowH = clamp((H - topH - bottomH) / Math.max(1, cats.length), 18, 40);
     var need = topH + bottomH + rowH * cats.length; if (need > H + 1) { H = Math.ceil(need); box.style.minHeight = H + 'px'; }
@@ -565,7 +601,7 @@
     function show(m) {
       var a = A.values[m.i], b = B.values[m.i];
       tip.show(W * 0.5 * scaleK(F.el, W), m.cy * scaleK(F.el, W), cats[m.i], [{ color: A._c, value: fmt(a, vf), name: A.name }, { color: B._c, value: fmt(b, vf), name: B.name },
-        { value: isNum(a) && isNum(b) ? signed(b - a, vf === 'auto' ? '.3f' : vf) : '–', name: '差' }]);
+        { value: isNum(a) && isNum(b) ? signed(b - a, vf === 'auto' ? '.3f' : vf) : '–', name: L.diff }]);
     }
     marks.forEach(function (m) { m.hit.addEventListener('pointerenter', function () { show(m); }); });
     keyNav(F.el, marks.length, function (i) { show(marks[i]); }, function () { tip.hide(); });
@@ -637,7 +673,7 @@
     var labW = Math.min(maxOf(rows.map(function (r) { return textWidth(r, 11.5); })) + 12, W * 0.3);
     var cw = (W - labW) / cols.length, colW = maxOf(cols.map(function (c) { return textWidth(c, 11.5); }));
     var many = cols.length > 12, rot = !many && colW > cw - 6;
-    var colLab = cols.map(function (c, j) { return rot ? ellipsize(c, Math.min(110, (W - labW - cw * (j + 0.5)) / 0.7071 - 4), 11.5) : c; });
+    var colLab = cols.map(function (c, j) { return rot ? ellipsize(c, Math.min(150, (W - labW - cw * (j + 0.5)) / 0.7071 - 4), 11.5) : c; });
     var topH = many ? 4 : rot ? maxOf(colLab.map(function (c) { return textWidth(c, 11.5); })) * 0.7071 + 14 : 20;
     var scaleH = 26, xLabH = many ? 18 : 0;
     var ch = (H - topH - scaleH - xLabH) / rows.length;
@@ -697,7 +733,7 @@
     var x = linear(xlo, xhi, x0, x1, { ticks: Math.max(2, Math.floor((x1 - x0) / 80)) });
     var lg = series.length > 1 ? series.map(function (s) { return { name: s.name, color: s._c, kind: 'dot' }; }) : [];
     if (typeof spec.diagonal === 'string') lg.push({ name: spec.diagonal, kind: 'ref' });
-    if (spec.fit) lg.push({ name: '最小二乘拟合', color: series.length === 1 ? series[0]._c : 'var(--rk-ink-2)', kind: 'line' });
+    if (spec.fit) lg.push({ name: L.fit, color: series.length === 1 ? series[0]._c : 'var(--rk-ink-2)', kind: 'line' });
     legend(box, lg);
     var F = frame(box, W, H), y0 = H - bottom;
     rightAxis(F.grid, y, x0, x1, yf);
@@ -721,7 +757,7 @@
         for (var k = 0; k < n; k++) { sxy += (X[k] - mx) * (Y[k] - my); sxx += (X[k] - mx) * (X[k] - mx); syy += (Y[k] - my) * (Y[k] - my); }
         var b1 = sxy / sxx, b0 = my - b1 * mx, xa = minOf(X), xb = maxOf(X);
         svg('line', { x1: x(xa), y1: y(b0 + b1 * xa), x2: x(xb), y2: y(b0 + b1 * xb), style: 'stroke:' + (series.length === 1 ? s._c : 'var(--rk-ink-2)'), 'stroke-width': 1.5 }, F.over);
-        notes.push((series.length > 1 ? s.name + '：' : '') + 'R² ' + (sxy * sxy / (sxx * syy)).toFixed(2) + '，斜率 ' + fmt(b1, '.2f'));
+        notes.push((series.length > 1 ? s.name + ': ' : '') + 'R² ' + (sxy * sxy / (sxx * syy)).toFixed(2) + L.sep + L.slope + ' ' + fmt(b1, '.2f'));
       }
     });
     if (notes.length) txt(F.over, x1 - 4, y0 - 8, notes.join('   '), { 'class': 'rk-dl', 'text-anchor': 'end' });
@@ -747,8 +783,8 @@
     var groups = (spec.groups || []).map(function (g) { return Object.assign({}, g); }), vf = spec.valueFormat || 'auto';
     assignColors(groups, null);
     var all = []; groups.forEach(function (g) { all.push(g.min, g.max); all = all.concat(nums(g.points)); });
-    var top = 10, bottom = 24;
-    top = 22;                                   // room for the median label above each whisker
+    var gnames = groups.map(function (g) { return g.name; });
+    var top = 22, bottom = 24 + (needsTwo(gnames, (W - 50) / Math.max(1, groups.length) - 6) ? 13 : 0);   // top: room for the median label
     var y = linear(spec.yMin != null ? spec.yMin : minOf(all), spec.yMax != null ? spec.yMax : maxOf(all), H - bottom, top, { ticks: yTicks(H, top, bottom) });
     var yf = tickFmt(y, vf), x0 = 2, x1 = W - tickWidth(y, yf) - 14, band = (x1 - x0) / groups.length, bw = Math.min(40, band * 0.36);
     legendSlot(box);
@@ -767,14 +803,14 @@
         var jx = cx + bw * 0.75 + ((k * 0.6180339887) % 1) * bw * 0.6;
         svg('circle', { cx: r1(jx), cy: r1(y(v)), r: 2.6, style: 'fill:' + g._c, 'fill-opacity': 0.75 }, F.marks);
       });
-      txt(F.grid, x0 + band * (i + 0.5), y0 + 16, ellipsize(g.name, band - 4, 11.5), { 'text-anchor': 'middle', 'class': 'rk-cat' });
+      catLabels(F.grid, x0 + band * (i + 0.5), y0 + 16, g.name, band - 6);
       txt(F.over, cx, y(g.max) - 6, fmt(g.median, vf), { 'text-anchor': 'middle', 'class': 'rk-dl' });
       marks.push({ i: i, cx: cx, hit: svg('rect', { x: x0 + band * i, y: top, width: band, height: y0 - top, 'class': 'rk-hit' }, F.over) });
     });
     function show(m) {
       var g = groups[m.i], k = scaleK(F.el, W);
-      tip.show(m.cx * k, (top + 30) * k, g.name, [{ value: fmt(g.max, vf), name: '最大' }, { value: fmt(g.q3, vf), name: '上四分位' }, { color: g._c, value: fmt(g.median, vf), name: '中位数' },
-        { value: fmt(g.q1, vf), name: '下四分位' }, { value: fmt(g.min, vf), name: '最小' }, { value: String(g.n), name: '样本' }]);
+      tip.show(m.cx * k, (top + 30) * k, g.name, [{ value: fmt(g.max, vf), name: L.max }, { value: fmt(g.q3, vf), name: L.q3 }, { color: g._c, value: fmt(g.median, vf), name: L.median },
+        { value: fmt(g.q1, vf), name: L.q1 }, { value: fmt(g.min, vf), name: L.min }, { value: String(g.n), name: L.n }]);
     }
     marks.forEach(function (m) { m.hit.addEventListener('pointerenter', function () { show(m); }); });
     keyNav(F.el, marks.length, function (i) { show(marks[i]); }, function () { tip.hide(); });
@@ -843,25 +879,25 @@
       head = [spec.xName || spec.xLabel || 'x'].concat(spec.series.map(function (s) { return s.name; }));
       spec.x.forEach(function (xv, i) { body.push([typeof xv === 'string' ? xv : fmt(xv, spec.xFormat)].concat(spec.series.map(function (s) { return fmt(s.values[i], spec.yFormat); }))); });
     } else if (T === 'bar') {
-      head = [spec.categoryName || '类别'].concat(spec.series.map(function (s) { return s.name; }));
+      head = [spec.categoryName || L.category].concat(spec.series.map(function (s) { return s.name; }));
       spec.categories.forEach(function (c, i) { body.push([c].concat(spec.series.map(function (s) { return fmt(s.values[i], f); }))); });
     } else if (T === 'waterfall') {
-      head = ['步骤', '变化', '累计']; var run = 0;
+      head = [L.step, L.change, L.cum]; var run = 0;
       spec.steps.forEach(function (s) { if (s.kind === 'total') { run = s.value; body.push([s.label, '', fmt(run, f)]); } else { run += s.value; body.push([s.label, signed(s.value, f || '.3f'), fmt(run, f)]); } });
     } else if (T === 'dumbbell') {
-      head = ['', spec.a.name, spec.b.name, '差'];
+      head = ['', spec.a.name, spec.b.name, L.diff];
       spec.categories.forEach(function (c, i) { var a = spec.a.values[i], b = spec.b.values[i]; body.push([c, fmt(a, f), fmt(b, f), isNum(a) && isNum(b) ? signed(b - a, f || '.3f') : '–']); });
     } else if (T === 'hist') {
-      head = ['区间'].concat(spec.series.map(function (s) { return s.name; }));
+      head = [L.bin].concat(spec.series.map(function (s) { return s.name; }));
       for (var i = 0; i < spec.edges.length - 1; i++) body.push(['[' + fmt(spec.edges[i], spec.xFormat) + ', ' + fmt(spec.edges[i + 1], spec.xFormat) + ')'].concat(spec.series.map(function (s) { return fmt(s.counts[i], spec.yFormat); })));
     } else if (T === 'heatmap') {
       head = [''].concat(spec.cols);
       spec.rows.forEach(function (r, i) { body.push([r].concat(spec.values[i].map(function (v) { return fmt(v, f || '.2f'); }))); });
     } else if (T === 'scatter') {
-      head = ['点', spec.xLabel || 'x', spec.yLabel || 'y'];
+      head = [L.point, spec.xLabel || 'x', spec.yLabel || 'y'];
       spec.series.forEach(function (s) { s.x.forEach(function (xv, i) { if (body.length < 500) body.push([s.labels ? s.labels[i] : s.name, fmt(xv, spec.xFormat), fmt(s.y[i], spec.yFormat)]); }); });
     } else if (T === 'box') {
-      head = ['组', '样本', '最小', '下四分位', '中位数', '上四分位', '最大'];
+      head = [L.group, L.n, L.min, L.q1, L.median, L.q3, L.max];
       spec.groups.forEach(function (g) { body.push([g.name, String(g.n)].concat([g.min, g.q1, g.median, g.q3, g.max].map(function (v) { return fmt(v, f); }))); });
     } else if (T === 'multiples') {
       head = [''].concat(spec.panels.map(function (p) { return p.name; }));
@@ -886,11 +922,11 @@
   function draw(box) {
     var spec = readSpec(box), keep = box.querySelector('script[type="application/json"]');
     Array.prototype.slice.call(box.childNodes).forEach(function (n) { if (n !== keep && !(n.classList && n.classList.contains('rk-dataview'))) box.removeChild(n); });
-    if (!spec || !RENDER[spec.type]) { h('p', 'rk-muted', box, '图表数据无法读取。'); return; }
+    if (!spec || !RENDER[spec.type]) { h('p', 'rk-muted', box, L.bad); return; }
     box.style.minHeight = spec.height ? spec.height + 'px' : '';
     var W = Math.max(200, Math.floor(box.clientWidth)), H = Math.max(80, Math.floor(box.clientHeight));
     try { RENDER[spec.type](box, spec, W, H); }
-    catch (e) { h('p', 'rk-muted', box, '图表渲染失败：' + e.message); if (window.console) console.error(e); }
+    catch (e) { h('p', 'rk-muted', box, L.fail + e.message); if (window.console) console.error(e); }
     box._w = Math.floor(box.clientWidth); box._h = Math.floor(box.clientHeight);
     var s2 = box.querySelector('svg'), panel = box.closest('.rk-panel'), cap = panel && panel.querySelector('.rk-pt');
     if (s2 && cap) s2.setAttribute('aria-label', cap.textContent);
@@ -901,8 +937,8 @@
     panel._rk = true;
     var foot = panel.querySelector('.rk-pf');
     if (!foot) return;
-    var btn = h('button', 'rk-btn', foot, '数据');
-    btn.type = 'button'; btn.setAttribute('aria-pressed', 'false'); btn.title = '显示图背后的数字';
+    var btn = h('button', 'rk-btn', foot, L.data);
+    btn.type = 'button'; btn.setAttribute('aria-pressed', 'false'); btn.title = L.dataTip;
     var view = h('div', 'rk-dataview', box); view.hidden = true;
     btn.onclick = function () {
       var on = view.hidden;
@@ -960,19 +996,19 @@
     on();
   }
   function copyText(t, btn) {
-    function done() { var o = btn.textContent; btn.textContent = '已复制'; setTimeout(function () { btn.textContent = o; }, 1200); }
+    function done() { var o = btn.textContent; btn.textContent = L.copied; setTimeout(function () { btn.textContent = o; }, 1200); }
     function fallback() { var a = doc.createElement('textarea'); a.value = t; a.style.position = 'fixed'; a.style.opacity = '0'; doc.body.appendChild(a); a.select(); try { doc.execCommand('copy'); done(); } catch (e) { } doc.body.removeChild(a); }
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(done, fallback); else fallback();
   }
   function copyButtons() {
     doc.querySelectorAll('.rk-code').forEach(function (w) {
       if (w.querySelector('.rk-copy')) return;
-      var code = w.querySelector('code') || w.querySelector('pre'), b = h('button', 'rk-btn rk-copy', w, '复制');
+      var code = w.querySelector('code') || w.querySelector('pre'), b = h('button', 'rk-btn rk-copy', w, L.copy);
       b.type = 'button'; b.onclick = function () { copyText(code.textContent, b); };
     });
     doc.querySelectorAll('.rk-math[data-tex]').forEach(function (w) {
       if (w.querySelector('.rk-copy')) return;
-      var b = h('button', 'rk-btn rk-copy', w, '复制 LaTeX');
+      var b = h('button', 'rk-btn rk-copy', w, L.copyTex);
       b.type = 'button'; b.onclick = function () { copyText(w.getAttribute('data-tex'), b); };
     });
   }

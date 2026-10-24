@@ -12,6 +12,7 @@ Pick the form by the reader's job (docs/report-theme/README.md, "图表怎么选
     two quantities per item ............... scatter      fit=True adds OLS line and R²
     the same measure for many items ....... multiples    small multiples on one y-scale
     classifier quality .................... roc, calibration (need numpy)
+Helpers that write labels themselves (roc, calibration, unnamed series) take lang="zh" | "en".
 House style the renderer enforces: value axis on the right, one y-axis only, solid hairline grid, ink zero
 line, legend in the panel head, colours follow the series name across the report, tooltips and a "数据"
 table view on every chart. Inputs may be lists, numpy arrays or pandas objects; NaN becomes a gap.
@@ -24,7 +25,13 @@ import bisect
 import math
 import random
 
-from .report import _py
+from .report import _py, lang_key
+
+# default words for helpers that label things themselves (ROC, calibration, unnamed series)
+WORDS = {"zh": {"value": "值", "sample": "样本", "fpr": "假阳性率", "random": "随机", "pred": "平均预测概率", "pred_short": "预测",
+                "obs": "实际频率", "perfect": "完美校准"},
+         "en": {"value": "Value", "sample": "Count", "fpr": "False positive rate", "random": "Random", "pred": "Mean predicted probability",
+                "pred_short": "Predicted", "obs": "Observed frequency", "perfect": "Perfect calibration"}}
 
 _KEEP_FALSE = {"endLabels", "labels", "horizontal", "tags", "shareY"}   # False means "off" for these
 
@@ -76,14 +83,14 @@ def line(x, series, *, x_label=None, x_name=None, x_format=None, y_format=None, 
 
 def bar(categories, series, *, horizontal=None, stacked=False, tone=None, value_format=None, labels=None,
         highlight=None, sort=None, category_name=None, axis=False, min=None, max=None, refs=None,
-        height=None) -> dict:
+        height=None, lang="zh") -> dict:
     """Bars per category. series: values (one series) or {name: values} (grouped, or stacked=True).
     horizontal: None = automatic (horizontal when labels do not fit under columns), True / False to force.
     tone="sign": one series coloured green when >= 0 and red when < 0 (changes, P&L-like values).
     highlight: category or categories in colour, others grey. sort: "desc" / "asc" by the first series.
     labels: value at the bar tip (default on for one series). axis: show the value axis on horizontal bars."""
     cats = [str(c) for c in _py(categories)]
-    ser = _series(series)
+    ser = _series(series, default_name=WORDS[lang_key(lang)]["value"])
     if sort:
         vals = ser[0]["values"]
         order = sorted(range(len(cats)), key=lambda i: (vals[i] is None, (-1 if sort == "desc" else 1) * (vals[i] or 0)))
@@ -154,16 +161,16 @@ def _counts(values, edges, density):
 
 
 def hist(values=None, *, series=None, bins=30, range=None, log_x=False, density=False, edges=None, counts=None,
-         x_label=None, x_format=None, y_format=None, refs=None, height=None) -> dict:
+         x_label=None, x_format=None, y_format=None, refs=None, height=None, lang="zh") -> dict:
     """Histogram. Raw `values` (one series, filled columns) or `series` {name: values} (<= 3, drawn as steps),
     or precomputed `edges` (n+1) and `counts`. log_x: geometric bins on a log axis. refs: [{"x", "label"}]."""
     if edges is None:
-        data = {k: _vals(v) for k, v in series.items()} if series else {"样本": _vals(values)}
+        data = {k: _vals(v) for k, v in series.items()} if series else {WORDS[lang_key(lang)]["sample"]: _vals(values)}
         edges = _edges([v for vs in data.values() for v in vs], bins, range, log_x)
         ser = [{"name": k, "counts": _counts(v, edges, density)} for k, v in data.items()]
     else:
         edges = _vals(edges)
-        ser = _series(counts, key="counts", default_name="样本")
+        ser = _series(counts, key="counts", default_name=WORDS[lang_key(lang)]["sample"])
     return _spec("hist", edges=_round(edges), series=ser, xLog=log_x, xLabel=x_label, xFormat=x_format,
                  yFormat=y_format, refs=_refs(refs), height=height)
 
@@ -265,18 +272,20 @@ def roc_curve(y_true, score, points: int = 101):
     return grid, np.interp(grid, fpr, tpr), auc
 
 
-def roc(y_true, scores: dict, *, points: int = 101, show_auc: bool = True, height=None) -> dict:
+def roc(y_true, scores: dict, *, points: int = 101, show_auc: bool = True, height=None, lang="zh") -> dict:
     """ROC curves for {name: score}. Legend names get the AUC appended; the colour still follows the bare
     name (series "key"), so each model keeps its colour in the other charts."""
+    w, en = WORDS[lang_key(lang)], lang_key(lang) == "en"
     series, grid = [], None
     for name, sc in scores.items():
         grid, tpr, auc = roc_curve(y_true, sc, points)
-        series.append({"name": f"{name}（AUC {auc:.3f}）" if show_auc else name, "key": name, "values": _round(tpr, 4)})
-    return line(_round(grid, 4), series, x_label="假阳性率", x_name="假阳性率", x_format=".2f", y_format=".2f",
-                x_min=0, x_max=1, y_min=0, y_max=1, diagonal="随机", tags=False, height=height)
+        label = (f"{name} (AUC {auc:.3f})" if en else f"{name}（AUC {auc:.3f}）") if show_auc else name
+        series.append({"name": label, "key": name, "values": _round(tpr, 4)})
+    return line(_round(grid, 4), series, x_label=w["fpr"], x_name=w["fpr"], x_format=".2f", y_format=".2f",
+                x_min=0, x_max=1, y_min=0, y_max=1, diagonal=w["random"], tags=False, height=height)
 
 
-def calibration(y_true, probs: dict, *, bins: int = 10, height=None) -> dict:
+def calibration(y_true, probs: dict, *, bins: int = 10, height=None, lang="zh") -> dict:
     """Reliability curve: mean predicted probability vs observed frequency per quantile bin (one model:
     line with markers; several: scatter)."""
     import numpy as np
@@ -289,9 +298,10 @@ def calibration(y_true, probs: dict, *, bins: int = 10, height=None) -> dict:
         mp = np.array([p[idx == b].mean() if np.any(idx == b) else np.nan for b in range(bins)])
         fr = np.array([y[idx == b].mean() if np.any(idx == b) else np.nan for b in range(bins)])
         out[name] = (mp, fr)
+    w = WORDS[lang_key(lang)]
     if len(out) == 1:
         (name, (mp, fr)), = out.items()
-        return line(_round(mp, 4), {name: _round(fr, 4)}, x_label="平均预测概率", x_name="预测", x_format=".2f",
-                    y_format=".2f", diagonal="完美校准", markers=True, tags=False, height=height)
-    return scatter({k: (v[0], v[1]) for k, v in out.items()}, x_label="平均预测概率", y_label="实际频率",
-                   x_format=".2f", y_format=".2f", diagonal="完美校准", height=height)
+        return line(_round(mp, 4), {name: _round(fr, 4)}, x_label=w["pred"], x_name=w["pred_short"], x_format=".2f",
+                    y_format=".2f", diagonal=w["perfect"], markers=True, tags=False, height=height)
+    return scatter({k: (v[0], v[1]) for k, v in out.items()}, x_label=w["pred"], y_label=w["obs"],
+                   x_format=".2f", y_format=".2f", diagonal=w["perfect"], height=height)

@@ -9,9 +9,9 @@
 
 几个入口：
 
-- **看效果**：[示例报告](../../report/example.html)（合成数据，用到了全部图型和面板）· [空白模板](../../report/template.html)
+- **看效果**：示例报告 [中文](../../report/example.html) · [English](../../report/example-en.html)（合成数据，用到了全部图型和面板；页头右上角「中文 | EN」可以互相切换）· 空白模板 [中文](../../report/template.html) · [English](../../report/template-en.html)
 - **代码**：[`src/reportkit/`](../../src/reportkit/__init__.py)，只依赖 Python 标准库；ROC、校准图和示例报告需要 numpy
-- **单独下载**：[theme.css](../../report/theme.css) · [theme.js](../../report/theme.js) · [template.html](../../report/template.html)（打开后「另存为」，字体在 `report/fonts/`）
+- **单独下载**：[theme.css](../../report/theme.css) · [theme.js](../../report/theme.js) · [template.html](../../report/template.html) · [template-en.html](../../report/template-en.html)（打开后「另存为」，字体在 `report/fonts/`）
 
 ## 1. 版式：一行 12 栏，行内对齐
 
@@ -175,14 +175,48 @@
 - 前 3 色两两之间也通过，所以散点图最多 3 组。
 - 浅色下琥珀和天蓝对白底的对比度低于 3:1，所以每张图都配了「数据」视图。
 
-**字体。** 拉丁字母和数字用 Inter（OFL 许可，来自 visual-repo-202610 的 `kit/fonts`，已内嵌），中文用系统字体（苹方、微软雅黑、思源黑体）。
+**字体。** 拉丁字母和数字用 Inter（OFL 许可，来自 visual-repo-202610 的 `kit/fonts`，已内嵌），中文用系统字体（苹方、微软雅黑、思源黑体）。英文报告的标题、导语和章节标题用 Source Serif 4（同样来自 visual-repo-202610，OFL），只在英文报告里内嵌。
 
 - 正文 14px，标题 34px 粗体。
 - 表格和坐标轴用等宽数字，大号指标用默认数字。
 
 **打印。** 打印永远是浅色、A4 纵向，页边距 12 / 10 mm。打印前版面按 A4 宽度重排，图按新宽度重画，字号不会被缩小。导航和按钮会隐藏，面板不跨页断开。
 
-## 9. 交付前检查
+## 9. 英文报告
+
+同一套版式和图表，加 `lang="en"` 就是英文版：
+
+```python
+r = Report("The linear model has peaked at 0.792 AUC; nonlinear terms add only 0.0007",
+           dek="How three models built on the same six features perform out of sample ...",
+           kicker=["Quant research", "Model evaluation"], status="review", date="24 Oct 2026",
+           lang="en", translations={"zh": "report-zh.html"})       # translations 会在页头加「中文 | EN」切换
+r.chart(charts.roc(y, scores, lang="en"), span=4, title="Three ROC curves collapse onto two")
+```
+
+- 自己写标签的图表函数（`roc`、`calibration`、`hist`、`bar`）也传 `lang="en"`，坐标轴和图例会用英文。
+- 示例的中英文两版共用一套版式，只有文字不同（`src/reportkit/example.py` 里的 `TEXT`）。命令行：`python -m reportkit example report-en.html --lang en`、`python -m reportkit template blank-en.html --lang en`。
+- 一份报告出两种语言时，各生成一个文件，用 `translations` 互相链接；页头的「中文 | EN」就是切换按钮。
+
+**英文版的样式差异**（只在 `<html lang="en">` 下生效，网格、面板和图表与中文版完全一样）：
+
+| 元素 | 中文版 | 英文版 |
+|---|---|---|
+| 标题、导语、章节标题 | 无衬线粗体 | Source Serif 4 衬线体（OFL，内嵌） |
+| 标签（kicker、图号、表头、指标名、署名） | 原样 | 全大写、加字距（small caps 风格） |
+| 正文 | 14px，行高 1.62 | 14.5px，行高 1.56，自动断字，行宽更窄 |
+| 界面文字 | 图 n、表 n、要点、本报告、数据 | Figure n、Table n、Key points、About this note、Data |
+| 状态和提示 | 草稿 / 评审中 / 定稿；注意、风险 | Draft / In review / Final；Caution、Risk |
+
+**英文写作规则：**
+
+- 标题用 sentence case，写结论而不是主题：「The linear model has peaked at 0.792 AUC」，不写「Model Evaluation Results」。
+- 数字：千分位用逗号（45,000）；区间用 en dash，两边不留空格（0.717–0.844）；负号用减号（−0.024）；变化量带符号（+0.025）。
+- 比较写 `vs`（不加句点）；日期写 `24 Oct 2026`；单位写在副标题，例如「Daily AUC, test period」。
+- 一份报告里拼写统一（英式或美式选一种，示例用英式：standardised、neighbouring）。
+- 缩写第一次出现时写全称，例如 AUC (area under the ROC curve)、CI (confidence interval)；没有做检验不写 significant。
+
+## 10. 交付前检查
 
 - 报告标题、章节导语、每个图表标题都是结论，不是主题。
 - 指标条和要点里的每个数，在正文里都有对应的图或表。
@@ -193,7 +227,7 @@
 - 打印预览里没有被切断的面板。
 - 文件是单个 HTML（搜索不到 `href="theme.css"`）。
 
-## 10. 给 Copilot 的提示词
+## 11. 给 Copilot 的提示词
 
 在 Copilot Chat 里让它生成报告时，把下面这段放在前面：
 
@@ -209,13 +243,14 @@
 7. 引用图表编号用 r.chart / r.table 的返回值，不手写。
 8. 必须有「检验与风险」（含结论成立的前提）和 r.actions 的下一步。
 9. 生成后运行脚本，确认文件能打开、没有「图表渲染失败」。
+10. 英文报告用 Report(..., lang="en")，roc / calibration / hist / bar 也传 lang="en"；标题用 sentence case，区间用 en dash（0.717–0.844）。
 ```
 
-## 11. 参考与来源
+## 12. 参考与来源
 
 - **版式风格**：参考财经终端研报的版式，包括黑色页头、粗结构线、结论式标题、指标条、右侧纵轴、线尾数值标签和来源行。只借鉴版式，不使用任何机构的标志、专有字体或品牌色。
 - **[visual-repo-202610](https://github.com/yangbrr17/visual-repo-202610) 里用到的部分**：
-  - Inter 字体文件（OFL）；
+  - Inter 和 Source Serif 4 字体文件（都是 OFL）；
   - 设计规范里的结论式标题、单位行、来源行、「文字只用文字色、颜色只给图形」等规则；
   - 组件目录里的图型（瀑布图、哑铃图、箱线图、小多图）；
   - 截图自检的思路：检查文字重叠和行内对齐。

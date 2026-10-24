@@ -16,7 +16,7 @@
 | `docs/signal-model/dl/*.md` | 每个深度学习模型一页 |
 | `src/arrivals/` | 到达分布检验包（H1–H9），入口 `report.py` |
 | `src/execrl/` | 执行决策包（bandit、离线 RL、PPO），入口 `train.py` |
-| `src/reportkit/` | 交付报告主题（研报版式）：`Report` 生成单文件 HTML，`charts` 生成图表 spec，`assets/` 里是 theme.css、theme.js、空白模板和 Inter 字体；规范在 `docs/report-theme/README.md` |
+| `src/reportkit/` | 交付报告主题（研报版式，中英文）：`Report` 生成单文件 HTML，`charts` 生成图表 spec，`assets/` 里是 theme.css、theme.js、中英文空白模板和字体（Inter、Source Serif 4）；规范在 `docs/report-theme/README.md` |
 | `src/tests/` | pytest 测试 |
 | `site/build.py` | 把 Markdown 和 `src/**/*.py` 生成静态站点；GitHub Actions 推送后自动发布到 Pages |
 | `site/encrypt_page.py`、`site/encrypted/` | 需要密码的笔记页：只提交密文 JSON，Markdown 原文和密码都不进仓库 |
@@ -58,7 +58,8 @@ python site/build.py                                         # builds _site/ (ne
 - 报告标题、章节导语、每个图表标题写结论；单位写在 `subtitle`，条件写在 `source`；要点 3–5 条，每条以一句 `**加粗**` 的结论开头。
 - 数字都从变量格式化，不手填；图表编号用 `r.chart` / `r.table` 的返回值引用。
 - 图表只用 `reportkit.charts`；同一个对象在所有图里用同一个系列名（颜色跟着名字走）；不用饼图和双 y 轴。
-- 改主题时同时改 `assets/theme.css`、`assets/theme.js`、`assets/template.html`、规范页第 5–8 节和 `src/tests/test_reportkit.py`；改完用浏览器看浅色、深色（终端风格）、手机宽度和打印预览，并检查图内文字没有重叠、同一行的图顶和来源线对齐。
+- 改主题时同时改 `assets/theme.css`、`assets/theme.js`、两个模板（`template.html`、`template-en.html`）、规范页第 5–9 节和 `src/tests/test_reportkit.py`；改完用浏览器看浅色、深色（终端风格）、手机宽度和打印预览，并检查图内文字没有重叠、同一行的图顶和来源线对齐。
+- 英文报告：`Report(..., lang="en", translations={"zh": "…"})`，`roc` / `calibration` / `hist` / `bar` 也传 `lang="en"`；英文写法见规范页第 9 节。界面文字只放在 `report.py` 的 `UI` 和 `theme.js` 的 `L` 两张表里，新增文字两种语言都要补。
 - CSS 类名都以 `rk-` 开头，新增前先搜一遍：SVG 元素也会吃到同名类的 `width` / `height`（`rk-mark` 曾经和页头的小方块撞名，柱子被压成 10×10）。
 
 ## 待办（按优先级）

@@ -15,7 +15,7 @@
 ```bash
 pip install numpy scipy pandas scikit-learn lightgbm pytest
 pip install torch --index-url https://download.pytorch.org/whl/cpu      # only for IQL / PPO
-PYTHONPATH=src python -m pytest -q src/tests                            # 26 tests, about 45 s
+PYTHONPATH=src python -m pytest -q src/tests                            # 29 tests, about 50 s
 ```
 
 ## arrivals：文件一览
@@ -88,8 +88,8 @@ PYTHONPATH=src python -m execrl.train all --out runs/all --threads 8
 | [`reportkit/report.py`](reportkit/report.py) | `Report`：页头、标题区、指标条、要点、章节、12 栏的行和面板（图、表、文字、提示）、下一步、附录、版本记录，输出单个 HTML |
 | [`reportkit/charts.py`](reportkit/charts.py) | 图表 spec：line、bar、waterfall、dumbbell、hist、box、heatmap、scatter、multiples、roc、calibration |
 | [`reportkit/mpl.py`](reportkit/mpl.py) | 和主题一致的 matplotlib 样式 |
-| [`reportkit/example.py`](reportkit/example.py) | 网站上的示例报告（合成数据） |
-| `reportkit/assets/` | `theme.css`、`theme.js`（图表渲染、章节导航、提示、数据视图、打印重排）、`template.html`（手写路线）、`fonts/`（Inter，OFL） |
+| [`reportkit/example.py`](reportkit/example.py) | 网站上的示例报告（合成数据，中英文共用一套版式） |
+| `reportkit/assets/` | `theme.css`、`theme.js`（图表渲染、章节导航、提示、数据视图、打印重排、中英文界面）、`template.html` / `template-en.html`（手写路线）、`fonts/`（Inter、Source Serif 4，OFL） |
 
 ```bash
 PYTHONPATH=src python -m reportkit example report.html

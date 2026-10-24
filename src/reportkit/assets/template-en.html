@@ -1,0 +1,172 @@
+<!doctype html>
+<!--
+  reportkit v2 blank template, English (hand-written route, no Python needed).
+  Usage: copy this file next to theme.css, theme.js and fonts/; replace the «placeholders»; delete panels you do not need.
+  Before sending, inline everything into one file: python -m reportkit inline draft.html final.html
+  Rules (docs/report-theme/README.md):
+    - Fixed order: masthead → headline → KPI strip → key points + about → numbered sections → next steps → appendix → history
+    - A section is a stack of rows (.rk-row); a row has 12 columns and its panels' --span values must add up to 12
+    - Every panel has three parts: .rk-ph (label, title, subtitle), .rk-pb (chart, table or text), .rk-pf (source);
+      keep all three, or the row will not align
+    - Titles state the finding in sentence case; units go in the subtitle; number figures and tables by hand
+    - Charts are JSON specs (<script type="application/json">) drawn by theme.js; never paste screenshots
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>«Report title»</title>
+<script>(function(){try{var t=localStorage.getItem('rk-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body class="rk">
+
+<!-- ============ Masthead: product line · ID | date · version · status (rk-st-draft / rk-st-review / rk-st-final) ============ -->
+<div class="rk-mast"><div class="rk-mast-in">
+  <div class="rk-mast-l"><span class="rk-brandmark"></span><span class="rk-brand">Research Note</span><span class="rk-sep rk-hide-s"></span><span class="rk-dim rk-hide-s">«ID»</span></div>
+  <div class="rk-mast-r"><span class="rk-dim rk-hide-s">«DD Mon YYYY»</span><span class="rk-dim rk-hide-s">v0.1</span><span class="rk-status rk-st-draft">Draft</span><span class="rk-langs"><a href="template.html" hreflang="zh">中文</a><b aria-current="page">EN</b></span>
+    <button type="button" data-rk="theme" aria-label="Switch light / dark">Theme</button><button type="button" data-rk="print" class="rk-hide-s">Print / PDF</button></div>
+</div></div>
+
+<main class="rk-sheet">
+
+<!-- ============ Headline ============ -->
+<header class="rk-hero">
+  <div class="rk-kicker"><span>«Area»</span><span>«Topic»</span></div>
+  <h1 class="rk-title">«State the finding: e.g. The linear model has peaked at 0.792 AUC; nonlinear terms add only 0.0007»</h1>
+  <p class="rk-dek">«One or two sentences: the question, the data, and what the reader should take away.»</p>
+  <dl class="rk-byline"><div><dt>Author</dt><dd>«Name»</dd></div><div><dt>Data</dt><dd>«Sample»</dd></div><div><dt>Split</dt><dd>«Train / test»</dd></div></dl>
+</header>
+
+<!-- ============ KPI strip: 2–6 cells; change colour rk-up-t better / rk-down-t worse, ▲▼ shows direction ============ -->
+<div class="rk-strip" style="--n:4">
+  <div class="rk-kpi"><div class="rk-kpi-label">«Metric»</div><div class="rk-kpi-value">0.792</div>
+    <div class="rk-kpi-delta rk-up-t"><span>▲ +0.025</span><span class="rk-ref">vs baseline</span></div>
+    <div class="rk-spark" data-spark="[0.79,0.78,0.80,0.79,0.80,0.83,0.71,0.74,0.76,0.82,0.75,0.77,0.81,0.79,0.79]"></div></div>
+  <div class="rk-kpi"><div class="rk-kpi-label">«Lower is better»</div><div class="rk-kpi-value">0.5520</div>
+    <div class="rk-kpi-delta rk-up-t"><span>▼ −0.0242</span><span class="rk-ref">vs baseline</span></div></div>
+  <div class="rk-kpi"><div class="rk-kpi-label">«Range»</div><div class="rk-kpi-value">0.717–0.844</div><div class="rk-kpi-note">«Definition»</div></div>
+  <div class="rk-kpi"><div class="rk-kpi-label">«Sample»</div><div class="rk-kpi-value">45,000</div><div class="rk-kpi-note">«Definition»</div></div>
+</div>
+
+<!-- ============ Key points (8 columns) + About this note (4 columns) ============ -->
+<div class="rk-row">
+  <figure class="rk-panel rk-text" style="--span:8">
+    <div class="rk-ph"><div class="rk-pl">Key points</div></div>
+    <div class="rk-pb"><ol class="rk-points">
+      <li><div><b>«Finding one, in one sentence.»</b> «Evidence, numbers and conditions.»</div></li>
+      <li><div><b>«Finding two, in one sentence.»</b> «Evidence, numbers and conditions.»</div></li>
+      <li><div><b>«Finding three, in one sentence.»</b> «Evidence, numbers and conditions.»</div></li>
+    </ol></div>
+    <div class="rk-pf"><span class="rk-src"></span></div>
+  </figure>
+  <figure class="rk-panel rk-info" style="--span:4">
+    <div class="rk-ph"><div class="rk-pl">About this note</div></div>
+    <div class="rk-pb"><dl class="rk-defs"><dt>Data</dt><dd>«…»</dd><dt>Label</dt><dd>«…»</dd><dt>Method</dt><dd>«…»</dd></dl>
+      <div class="rk-decide"><b>Decision needed</b>«What the reader has to decide; delete this block if nothing»</div></div>
+    <div class="rk-pf"><span class="rk-src"></span></div>
+  </figure>
+</div>
+
+<nav class="rk-nav" aria-label="Sections"></nav>
+
+<!-- ============ 1 Section: table + chart (7 + 5) ============ -->
+<section class="rk-sec" id="s1">
+  <div class="rk-sec-head"><span class="rk-n">1</span><h2>Main results</h2><p class="rk-lead">«The section's finding, in one sentence.»</p></div>
+  <div class="rk-row" style="--h:240px">
+    <!-- Table: numeric cells class="rk-r"; best value rk-best; better / worse rk-tg / rk-tb; key row tr.rk-hl; total row tr.rk-total -->
+    <figure class="rk-panel rk-tbl" style="--span:7">
+      <div class="rk-ph"><div class="rk-pl">Table 1</div><div class="rk-pt">«Table title states the finding»</div><div class="rk-ps">«Definitions and units»</div></div>
+      <div class="rk-pb"><div class="rk-tablewrap"><table class="rk-table">
+        <thead><tr><th>Model</th><th class="rk-r">AUC</th><th class="rk-r">Δ AUC</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Baseline</td><td class="rk-r">0.7668</td><td class="rk-r">+0.0000</td><td><span class="rk-badge">Reference</span></td></tr>
+          <tr class="rk-hl"><td>«New model»</td><td class="rk-r rk-best">0.7923</td><td class="rk-r rk-tg">+0.0255</td><td><span class="rk-badge rk-good">Adopt</span></td></tr>
+        </tbody></table></div></div>
+      <div class="rk-pf"><span class="rk-src">«Source and conditions»</span></div>
+    </figure>
+    <!-- Waterfall: from one total to another in steps -->
+    <figure class="rk-panel rk-fig" style="--span:5">
+      <div class="rk-ph"><div class="rk-pl">Figure 1</div><div class="rk-pt">«Chart title states the finding»</div><div class="rk-ps">«What is plotted, units»</div></div>
+      <div class="rk-pb"><div class="rk-chart"><script type="application/json">
+        {"type":"waterfall","steps":[{"label":"Baseline","value":0.7668,"kind":"total"},{"label":"New features","value":0.0255},{"label":"Nonlinear terms","value":0.0007},{"label":"Final","value":0.793,"kind":"total"}],"valueFormat":".4f","yMin":0.74}
+      </script></div></div>
+      <div class="rk-pf"><span class="rk-src">«Source and conditions»</span></div>
+    </figure>
+  </div>
+
+  <!-- Three charts side by side (4 + 4 + 4) -->
+  <div class="rk-row" style="--h:220px">
+    <figure class="rk-panel rk-fig" style="--span:4">
+      <div class="rk-ph"><div class="rk-pl">Figure 2</div><div class="rk-pt">«Line: tags show the last value»</div><div class="rk-ps">«Units»</div></div>
+      <div class="rk-pb"><div class="rk-chart"><script type="application/json">
+        {"type":"line","x":["D1","D2","D3","D4","D5","D6"],"series":[{"name":"New model","values":[0.80,0.79,0.80,0.79,0.80,0.84]},{"name":"Baseline","values":[0.77,0.76,0.77,0.76,0.78,0.81]}],"yFormat":".3f"}
+      </script></div></div>
+      <div class="rk-pf"><span class="rk-src">«Source»</span></div>
+    </figure>
+    <figure class="rk-panel rk-fig" style="--span:4">
+      <div class="rk-ph"><div class="rk-pl">Figure 3</div><div class="rk-pt">«Columns: tone=sign, green up, red down»</div><div class="rk-ps">«Units»</div></div>
+      <div class="rk-pb"><div class="rk-chart"><script type="application/json">
+        {"type":"bar","categories":["D1","D2","D3","D4","D5","D6"],"series":[{"name":"Change","values":[0.012,-0.004,0.008,0.003,-0.002,0.01]}],"tone":"sign","valueFormat":"+.3f","labels":false}
+      </script></div></div>
+      <div class="rk-pf"><span class="rk-src">«Source»</span></div>
+    </figure>
+    <figure class="rk-panel rk-fig" style="--span:4">
+      <div class="rk-ph"><div class="rk-pl">Figure 4</div><div class="rk-pt">«Heatmap: correlations»</div><div class="rk-ps">«Definition»</div></div>
+      <div class="rk-pb"><div class="rk-chart"><script type="application/json">
+        {"type":"heatmap","rows":["A","B","C"],"cols":["A","B","C"],"values":[[1,0.45,0.3],[0.45,1,0.7],[0.3,0.7,1]],"domain":[-1,1]}
+      </script></div></div>
+      <div class="rk-pf"><span class="rk-src">«Source»</span></div>
+    </figure>
+  </div>
+
+  <!-- Text + callout (6 + 6); callouts: rk-call-warn Caution / rk-call-risk Risk / rk-call-good Finding / rk-call-note Note / rk-call-decision Decision needed -->
+  <div class="rk-row">
+    <figure class="rk-panel rk-text" style="--span:6">
+      <div class="rk-ph"><div class="rk-pl">Analysis</div><div class="rk-pt">«Subheading»</div></div>
+      <div class="rk-pb"><p>«Body text. One idea per paragraph; the conclusion first, then the detail.»</p></div>
+      <div class="rk-pf"><span class="rk-src"></span></div>
+    </figure>
+    <figure class="rk-panel rk-text rk-call-warn" style="--span:6">
+      <div class="rk-ph"><div class="rk-pl">Caution</div><div class="rk-pt">«What is easy to misread»</div></div>
+      <div class="rk-pb"><p>«Explanation»</p></div>
+      <div class="rk-pf"><span class="rk-src"></span></div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ Next steps ============ -->
+<section class="rk-sec" id="s2">
+  <div class="rk-sec-head"><span class="rk-n">2</span><h2>Next steps</h2><p class="rk-lead">«One sentence»</p></div>
+  <div class="rk-row">
+    <figure class="rk-panel rk-tbl" style="--span:12">
+      <div class="rk-ph"><div class="rk-pt">«Follow-ups, in order»</div></div>
+      <div class="rk-pb"><div class="rk-tablewrap"><table class="rk-table rk-actions">
+        <thead><tr><th>#</th><th>Action</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>01</td><td>«Action»</td><td>«Name»</td><td>«Date»</td><td><span class="rk-badge rk-info">In progress</span></td></tr>
+          <tr><td>02</td><td>«Action»</td><td>«Name»</td><td>«Date»</td><td><span class="rk-badge">Not started</span></td></tr>
+          <tr><td>03</td><td>«Action»</td><td>«Name»</td><td>«Date»</td><td><span class="rk-badge rk-warn">At risk</span></td></tr>
+        </tbody></table></div></div>
+      <div class="rk-pf"><span class="rk-src"></span></div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ Appendix ============ -->
+<div class="rk-appendix-start">Appendix</div>
+<section class="rk-sec rk-appendix" id="sA">
+  <div class="rk-sec-head"><span class="rk-n">A</span><h2>Method and reproduction</h2></div>
+  <div class="rk-code"><span class="rk-lang">bash</span><pre><code>«Command to reproduce»</code></pre></div>
+</section>
+
+<footer class="rk-foot">
+  <div class="rk-foot-log"><div class="rk-pl">Version history</div><table class="rk-table"><thead><tr><th>Version</th><th>Date</th><th>Notes</th></tr></thead>
+    <tbody><tr><td>v0.1</td><td class="rk-tnum">«DD Mon YYYY»</td><td>First draft</td></tr></tbody></table></div>
+  <div class="rk-foot-meta"><p>Internal — for discussion only.</p></div>
+</footer>
+</main>
+<script src="theme.js"></script>
+</body>
+</html>

@@ -9,6 +9,9 @@
 @font-face{font-family:"Inter";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/inter-latin-400-normal.woff2") format("woff2")}
 @font-face{font-family:"Inter";font-style:normal;font-weight:600;font-display:swap;src:url("fonts/inter-latin-600-normal.woff2") format("woff2")}
 @font-face{font-family:"Inter";font-style:normal;font-weight:700;font-display:swap;src:url("fonts/inter-latin-700-normal.woff2") format("woff2")}
+@font-face{font-family:"Source Serif 4";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/source-serif-4-latin-400-normal.woff2") format("woff2")}
+@font-face{font-family:"Source Serif 4";font-style:italic;font-weight:400;font-display:swap;src:url("fonts/source-serif-4-latin-400-italic.woff2") format("woff2")}
+@font-face{font-family:"Source Serif 4";font-style:normal;font-weight:600;font-display:swap;src:url("fonts/source-serif-4-latin-600-normal.woff2") format("woff2")}
 
 :root{
   color-scheme:light;
@@ -35,6 +38,7 @@
   --rk-warn:#c77700;--rk-warn-bg:#fdf3dc;
   --rk-info:#2154d8;--rk-info-bg:#eef2fc;
   --rk-font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Source Han Sans SC",sans-serif;
+  --rk-serif:"Source Serif 4",Georgia,"Times New Roman",serif;
   --rk-mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Mono",Consolas,Menlo,monospace;
   --rk-gut:20px;
   --rk-sheet:1200px;
@@ -100,6 +104,11 @@ body.rk{margin:0;background:var(--rk-bg);color:var(--rk-ink);font:14px/1.62 var(
 .rk-status::before{content:"";width:6px;height:6px;border-radius:50%;background:#8f8f8f}
 .rk-status.rk-st-review::before{background:#ffb000}
 .rk-status.rk-st-final::before{background:#3ccf6e}
+.rk-langs{display:inline-flex;border:1px solid #3a3a3a;border-radius:2px;overflow:hidden;font-size:11.5px;font-weight:700;letter-spacing:.04em}
+.rk-langs a,.rk-langs b{padding:5px 8px;line-height:1}
+.rk-mast .rk-langs a{color:var(--rk-mast-dim);border:0;text-decoration:none}
+.rk-mast .rk-langs a:hover{color:#fff;background:#1c1c1c}
+.rk-langs b{background:var(--rk-mast-acc);color:#000}
 
 /* ---------------------------------------------------------------- sheet & hero */
 .rk-sheet{max-width:var(--rk-sheet);margin:0 auto;padding:0 24px 64px}
@@ -195,6 +204,7 @@ body.rk{margin:0;background:var(--rk-bg);color:var(--rk-ink);font:14px/1.62 var(
 .rk-chart{position:relative;flex:1;min-height:var(--h,260px)}
 .rk-chart>svg{position:absolute;left:0;top:0;display:block;overflow:visible;touch-action:pan-y}
 .rk-chart svg text{font-family:var(--rk-font);font-size:11px;fill:var(--rk-faint);font-variant-numeric:tabular-nums}
+.rk-chart svg text.rk-cat,.rk-chart svg text.rk-ax,.rk-chart svg text.rk-mt,.rk-chart svg text.rk-dl2{font-variant-numeric:normal}
 .rk-chart svg text.rk-cat{fill:var(--rk-ink-2);font-size:11.5px}
 .rk-chart svg text.rk-dl{fill:var(--rk-ink);font-size:11.5px;font-weight:700}
 .rk-chart svg text.rk-dl2{fill:var(--rk-ink-2);font-size:11px;font-weight:600}
@@ -236,7 +246,7 @@ body.rk{margin:0;background:var(--rk-bg);color:var(--rk-ink);font:14px/1.62 var(
 
 /* ---------------------------------------------------------------- tables */
 .rk-tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table.rk-table{width:100%;border-collapse:collapse;font-size:12.8px;line-height:1.45;font-variant-numeric:tabular-nums}
+table.rk-table{width:100%;border-collapse:collapse;font-size:12.8px;line-height:1.45}
 .rk-table th{font-size:11.5px;font-weight:700;color:var(--rk-ink-2);text-align:left;vertical-align:bottom;padding:5px 8px 6px;border-bottom:1px solid var(--rk-ink);white-space:nowrap}
 .rk-table td{padding:6px 8px;border-bottom:1px solid var(--rk-line);vertical-align:middle}
 .rk-table th:first-child,.rk-table td:first-child{padding-left:0;min-width:5.5em}
@@ -244,7 +254,7 @@ table.rk-table{width:100%;border-collapse:collapse;font-size:12.8px;line-height:
 .rk-table th:last-child,.rk-table td:last-child{padding-right:0}
 .rk-table tbody tr:nth-child(even) td{background:var(--rk-zebra)}
 .rk-table tbody tr:hover td{background:var(--rk-accent-soft)}
-.rk-table .rk-r{text-align:right;white-space:nowrap}
+.rk-table .rk-r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums}
 .rk-table .rk-c{text-align:center}
 .rk-table td.rk-best{font-weight:700}
 .rk-table td.rk-best::before{content:"";display:inline-block;width:5px;height:5px;background:var(--rk-accent);margin-right:5px;vertical-align:middle}
@@ -291,6 +301,33 @@ table.rk-table{width:100%;border-collapse:collapse;font-size:12.8px;line-height:
 .rk-foot .rk-table{font-size:11.5px}
 .rk-foot .rk-pl{margin-bottom:6px}
 
+/* ---------------------------------------------------------------- English notes (<html lang="en">)
+   Serif headline, standfirst and section titles (Source Serif 4); small-caps style labels; tighter measure
+   and hyphenation for Latin text. Everything else (grid, panels, charts) is shared with the Chinese layout. */
+html[lang^="en"] body.rk{font-size:14.5px;line-height:1.56;hyphens:auto;-webkit-hyphens:auto;font-feature-settings:"cv11","ss01"}
+html[lang^="en"] .rk-brand{text-transform:uppercase;letter-spacing:.14em;font-size:11.5px}
+html[lang^="en"] .rk-kicker{letter-spacing:.12em;font-size:11.5px}
+html[lang^="en"] .rk-title{font-family:var(--rk-serif);font-weight:600;font-size:42px;line-height:1.1;letter-spacing:-.015em;max-width:21em}
+html[lang^="en"] .rk-dek{font-family:var(--rk-serif);font-size:19.5px;line-height:1.45;color:var(--rk-ink-2);max-width:40em}
+html[lang^="en"] .rk-byline{font-size:12px}
+html[lang^="en"] .rk-byline dt{text-transform:uppercase;letter-spacing:.08em;font-size:10.5px;align-self:center}
+html[lang^="en"] .rk-kpi-label{text-transform:uppercase;letter-spacing:.07em;font-size:10.5px}
+html[lang^="en"] .rk-kpi-value{letter-spacing:-.025em}
+html[lang^="en"] .rk-nav a{font-size:12px;letter-spacing:.01em}
+html[lang^="en"] .rk-sec-head .rk-n,html[lang^="en"] .rk-sec-head h2{font-family:var(--rk-serif);font-weight:600;font-size:26px;letter-spacing:-.01em}
+html[lang^="en"] .rk-sec-head .rk-lead{font-family:var(--rk-serif);font-size:17px;line-height:1.45;max-width:46em}
+html[lang^="en"] .rk-pl{letter-spacing:.1em;font-size:10.5px}
+html[lang^="en"] .rk-pt{font-size:15px;line-height:1.32;letter-spacing:-.005em}
+html[lang^="en"] .rk-ps{font-size:12.5px}
+html[lang^="en"] .rk-points li{font-size:14.5px;line-height:1.55}
+html[lang^="en"] .rk-points li::before{font-family:var(--rk-serif);font-size:17px;line-height:1.3}
+html[lang^="en"] .rk-defs dt{text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;padding-top:2px}
+html[lang^="en"] .rk-decide b{letter-spacing:.1em;text-transform:uppercase}
+html[lang^="en"] .rk-table th{text-transform:uppercase;letter-spacing:.05em;font-size:10.5px}
+html[lang^="en"] .rk-appendix-start{letter-spacing:.16em;text-transform:uppercase}
+html[lang^="en"] .rk-prose{max-width:46em}
+html[lang^="en"] .rk-panel.rk-text .rk-pb{font-size:14px;line-height:1.58;hyphens:auto}
+
 /* ---------------------------------------------------------------- responsive */
 @media screen and (max-width:900px){
   .rk-row{grid-template-columns:minmax(0,1fr)}
@@ -305,8 +342,13 @@ table.rk-table{width:100%;border-collapse:collapse;font-size:12.8px;line-height:
   body.rk{font-size:13.5px}
   .rk-sheet{padding:0 14px 48px}
   .rk-mast-in{padding:0 14px}
-  .rk-mast .rk-hide-s{display:none}
+  .rk-mast .rk-hide-s,.rk-mast .rk-status{display:none}
+  .rk-mast-r{gap:8px}
   .rk-title{font-size:25px}
+  html[lang^="en"] .rk-title{font-size:29px}
+  html[lang^="en"] .rk-dek{font-size:16.5px}
+  html[lang^="en"] .rk-sec-head .rk-n{font-size:14px}
+  html[lang^="en"] .rk-sec-head h2{font-size:21px}
   .rk-dek{font-size:15px}
   .rk-kpi-value{font-size:24px}
   .rk-sec-head{grid-template-columns:minmax(0,1fr)}
@@ -331,6 +373,7 @@ table.rk-table{width:100%;border-collapse:collapse;font-size:12.8px;line-height:
   table.rk-table{font-size:11.5px}
   .rk-table td,.rk-table th{padding-left:5px;padding-right:5px}
   .rk-title{font-size:28px}
+  html[lang^="en"] .rk-title{font-size:32px}
   .rk-code pre{white-space:pre-wrap;overflow-wrap:anywhere}
   .rk-nav,.rk-mast button,.rk-mast a.rk-back,.rk-btn,.rk-copy,.rk-tip,.rk-dataview{display:none!important}
   .rk-sheet{max-width:none;padding:0}
@@ -338,6 +381,8 @@ table.rk-table{width:100%;border-collapse:collapse;font-size:12.8px;line-height:
   .rk-panel,.rk-strip,.rk-code,.rk-math,.rk-sec-head{break-inside:avoid}
   .rk-sec-head{break-after:avoid}
   .rk-row{break-inside:avoid}
+  .rk-row:not(:has(.rk-fig,.rk-tbl)),.rk-panel.rk-text,.rk-panel.rk-info{break-inside:auto}   /* text may flow onto the next page */
+  .rk-kpi-label{white-space:normal}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 html.rk-printing .rk-sheet,html.rk-printing .rk-mast-in{max-width:718px}
