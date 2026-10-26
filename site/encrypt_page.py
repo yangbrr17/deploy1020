@@ -3,6 +3,10 @@
     python3 site/encrypt_page.py path/to/note.md 1021 --nav "1021 讨论记录"
     # asks for the password (or reads PAGE_PASSWORD); writes site/encrypted/1021.json
 
+Files can travel inside the encrypted page: pass --attach path/to/file and refer to it in the Markdown as
+![alt](attach:file.png) (embedded image) or [download](attach:file.zip) (download link). They are encrypted
+with the page, so keep them small (the whole page is decrypted in the browser).
+
 Only the ciphertext goes into the repository. Keep the Markdown source and the password OUT of the repo
 (the source path should be outside the working tree or git-ignored). site/build.py turns the JSON into
 notes/<slug>.html, where the browser derives the key from the password and decrypts the page.
@@ -17,6 +21,7 @@ import base64
 import getpass
 import html
 import json
+import mimetypes
 import re
 import os
 import sys
@@ -47,6 +52,19 @@ def decrypt(d: dict, password: str) -> str:
     return AESGCM(key).decrypt(u(d["iv"]), u(d["ct"]), None).decode("utf8")
 
 
+def attach(body: str, path: Path) -> str:
+    """Inline a file referenced as attach:<name> (img src -> data URI, link -> data-b64 for a Blob download)."""
+    name = path.name
+    mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    data = base64.b64encode(path.read_bytes()).decode()
+    n = body.count(f'src="attach:{name}"') + body.count(f'href="attach:{name}"')
+    if not n:
+        sys.exit(f"--attach {name}: the page never refers to attach:{name}")
+    body = body.replace(f'src="attach:{name}"', f'src="data:{mime};base64,{data}"')
+    return body.replace(f'href="attach:{name}"',
+                        f'href="#" download="{html.escape(name)}" data-type="{mime}" data-b64="{data}"')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("source", help="Markdown file (keep it outside the repository)")
@@ -54,6 +72,8 @@ def main():
     ap.add_argument("--nav", help="sidebar label (default: the slug)")
     ap.add_argument("--title", help="public title shown before unlocking (default: '<slug> · 笔记');"
                     " the page's own heading stays inside the encrypted part")
+    ap.add_argument("--attach", action="append", default=[], metavar="FILE",
+                    help="embed a file referenced as attach:<file name> (repeatable)")
     a = ap.parse_args()
     pw = os.environ.get("PAGE_PASSWORD") or getpass.getpass("password: ")
     text = Path(a.source).read_text(encoding="utf8")
@@ -63,6 +83,10 @@ def main():
     lost = [h for h in re.findall(r"^## (.+)$", text, re.M) if html.escape(h.strip(), quote=False) not in body]
     if lost:
         sys.exit(f"these sections did not render (write '<' as \\lt in math): {lost}")
+    for f in a.attach:
+        body = attach(body, Path(f))
+    if "attach:" in re.sub(r"<pre.*?</pre>", "", body, flags=re.S):
+        sys.exit("the page refers to attach:<file> that was not passed with --attach")
     d = {"title": a.title or f"{a.slug} · 笔记", "nav": a.nav or a.slug, **encrypt(body, pw)}
     assert decrypt(d, pw) == body
     out = build.ENC_DIR / f"{a.slug}.json"

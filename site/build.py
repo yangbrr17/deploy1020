@@ -175,8 +175,61 @@ def render(src: str) -> tuple[str, str]:
     return render_text((ROOT / src).read_text(encoding="utf8"), src)
 
 
+LIST_ITEM = re.compile(r"^( *)([-*+]|\d+[.)]) +\S")
+
+
+def normalize_lists(text: str) -> str:
+    """Make CommonMark-style lists work with Python-Markdown: a blank line before a list that follows a paragraph,
+    and nested items (and the text, fences and math inside them) re-indented to 4 spaces per level.
+    Fenced code and display math are copied unchanged apart from that shift."""
+    out, stack = [], []                  # stack: indent widths of the open list levels
+    block, shift = None, 0               # block: closing marker of the fence / math block we are in
+    for line in text.split("\n"):
+        body = line.lstrip(" ")
+        n = len(line) - len(body)
+        if block:
+            out.append(" " * shift + line if shift > 0 and line.strip() else line)
+            if block in ("\\]", "$$"):
+                if body.rstrip().endswith(block):
+                    block = None
+            elif body.startswith(block) and not body.strip(block[0]).strip():
+                block = None
+            continue
+        if not body:
+            out.append(line)
+            continue
+        m = LIST_ITEM.match(line)
+        if m and not (n >= 4 and not stack):
+            while stack and stack[-1] > n:
+                stack.pop()
+            if not stack or n > stack[-1]:
+                stack.append(n)
+            prev = out[-1] if out else ""
+            if prev.strip() and not LIST_ITEM.match(prev):
+                out.append("")
+            out.append(" " * (4 * (len(stack) - 1)) + body)
+            continue
+        if stack and n > 0:
+            level = sum(w < n for w in stack)
+            shift = 4 * level - n
+            line = " " * (4 * level) + body
+        elif stack and not (out and out[-1].strip()):
+            stack, shift = [], 0         # an unindented line after a blank line ends the list
+        else:
+            shift = 0
+        if body.startswith(("```", "~~~")):
+            block = body[:3]
+        elif body.startswith("\\[") and not body.rstrip().endswith("\\]"):
+            block = "\\]"
+        elif body.startswith("$$") and not (len(body.rstrip()) > 2 and body.rstrip().endswith("$$")):
+            block = "$$"
+        out.append(line)
+    return "\n".join(out)
+
+
 def render_text(text: str, src: str) -> tuple[str, str]:
     """Markdown -> (title, body HTML). `src` is the page's repo path, used to rewrite relative links."""
+    text = normalize_lists(text)
     md = markdown.Markdown(extensions=[
         "tables", "toc", "sane_lists",
         "pymdownx.arithmatex", "pymdownx.superfences",
@@ -278,6 +331,12 @@ document.addEventListener('DOMContentLoaded',function(){
       box.innerHTML=h;f.parentNode.removeChild(f);msg.textContent='';var t=document.getElementById('locked-title');if(t)t.parentNode.removeChild(t);
       document.querySelector('main').classList.remove('locked');
       if(window.enhancePage)window.enhancePage(box);
+      box.querySelectorAll('a[data-b64]').forEach(function(a){a.addEventListener('click',function(e){
+        e.preventDefault();
+        var url=URL.createObjectURL(new Blob([b64(a.getAttribute('data-b64'))],{type:a.getAttribute('data-type')||'application/octet-stream'}));
+        var t=document.createElement('a');t.href=url;t.download=a.getAttribute('download')||'download';document.body.appendChild(t);t.click();t.remove();
+        setTimeout(function(){URL.revokeObjectURL(url)},4000);
+      })});
       var dia=box.querySelectorAll('pre.mermaid');
       if(dia.length)import('https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs').then(function(m){
         var r=document.documentElement,dark=r.getAttribute('data-theme')==='dark'||(!r.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);
