@@ -278,6 +278,11 @@ document.addEventListener('DOMContentLoaded',function(){
       box.innerHTML=h;f.parentNode.removeChild(f);msg.textContent='';var t=document.getElementById('locked-title');if(t)t.parentNode.removeChild(t);
       document.querySelector('main').classList.remove('locked');
       if(window.enhancePage)window.enhancePage(box);
+      var dia=box.querySelectorAll('pre.mermaid');
+      if(dia.length)import('https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs').then(function(m){
+        var r=document.documentElement,dark=r.getAttribute('data-theme')==='dark'||(!r.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);
+        m.default.initialize({startOnLoad:false,theme:dark?'dark':'neutral'});m.default.run({nodes:dia});
+      });
     },function(){msg.textContent='密码不对，或者页面数据损坏。'});
   };
 });
