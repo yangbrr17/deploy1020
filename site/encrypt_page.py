@@ -7,6 +7,10 @@ Files can travel inside the encrypted page: pass --attach path/to/file and refer
 ![alt](attach:file.png) (embedded image) or [download](attach:file.zip) (download link). They are encrypted
 with the page, so keep them small (the whole page is decrypted in the browser).
 
+--deny FILE (or the PAGE_DENYLIST environment variable) names a local list of terms, one per line, that must not
+appear in the page, its public title and nav label, or its attachments (zip members are scanned too). Keep that
+list outside the repository: it holds exactly the names that must not be published.
+
 Only the ciphertext goes into the repository. Keep the Markdown source and the password OUT of the repo
 (the source path should be outside the working tree or git-ignored). site/build.py turns the JSON into
 notes/<slug>.html, where the browser derives the key from the password and decrypts the page.
@@ -25,6 +29,8 @@ import mimetypes
 import re
 import os
 import sys
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes
@@ -65,6 +71,31 @@ def attach(body: str, path: Path) -> str:
                         f'href="#" download="{html.escape(name)}" data-type="{mime}" data-b64="{data}"')
 
 
+def denied(terms: list[str], name: str, text: str) -> list[str]:
+    """Terms found in text: whole-word, case-insensitive match for ASCII words, substring match otherwise."""
+    hits = []
+    for t in terms:
+        pat = rf"(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])" if t.isascii() else re.escape(t)
+        if re.search(pat, text, re.I):
+            hits.append(f"{name}: {t}")
+    return hits
+
+
+def check_terms(path: str, texts: dict[str, str], files: list[Path]) -> None:
+    terms = [t.strip() for t in Path(path).read_text(encoding="utf8").splitlines() if t.strip() and not t.startswith("#")]
+    hits = [h for name, text in texts.items() for h in denied(terms, name, text)]
+    for f in files:
+        data = f.read_bytes()
+        if zipfile.is_zipfile(f):
+            with zipfile.ZipFile(BytesIO(data)) as z:
+                for m in z.namelist():
+                    hits += denied(terms, f"{f.name}/{m}", m + "\n" + z.read(m).decode("utf8", "ignore"))
+        else:
+            hits += denied(terms, f.name, data.decode("utf8", "ignore"))
+    if hits:
+        sys.exit("denied terms found (nothing written):\n  " + "\n  ".join(hits))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("source", help="Markdown file (keep it outside the repository)")
@@ -74,9 +105,13 @@ def main():
                     " the page's own heading stays inside the encrypted part")
     ap.add_argument("--attach", action="append", default=[], metavar="FILE",
                     help="embed a file referenced as attach:<file name> (repeatable)")
+    ap.add_argument("--deny", default=os.environ.get("PAGE_DENYLIST"), metavar="FILE",
+                    help="local list of terms that must not be published (default: $PAGE_DENYLIST)")
     a = ap.parse_args()
     pw = os.environ.get("PAGE_PASSWORD") or getpass.getpass("password: ")
     text = Path(a.source).read_text(encoding="utf8")
+    if a.deny:
+        check_terms(a.deny, {"page": text, "title": a.title or "", "nav": a.nav or ""}, [Path(f) for f in a.attach])
     _, body = build.render_text(text, f"notes/{a.slug}.md")
     # A stray "<" inside display math can be parsed as an HTML tag and swallow the rest of the page:
     # make sure every "## " heading of the source made it into the HTML.
