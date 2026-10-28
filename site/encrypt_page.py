@@ -118,6 +118,8 @@ def main():
     lost = [h for h in re.findall(r"^## (.+)$", text, re.M) if html.escape(h.strip(), quote=False) not in body]
     if lost:
         sys.exit(f"these sections did not render (write '<' as \\lt in math): {lost}")
+    if re.search(r"<p>\[\s*\n", body):
+        sys.exit("a display formula did not render: leave a blank line before and after every \\[ ... \\] block")
     for f in a.attach:
         body = attach(body, Path(f))
     if "attach:" in re.sub(r"<pre.*?</pre>", "", body, flags=re.S):
