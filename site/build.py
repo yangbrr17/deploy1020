@@ -23,6 +23,10 @@ import markdown
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "_site"
+# What goes on the public site. The documents, code pages and report theme stay in the repository but are not
+# published while PUBLISH_DOCS is False; only the newest KEEP_NOTES password-protected notes are.
+PUBLISH_DOCS = False
+KEEP_NOTES = 3
 
 # Sidebar order: (source, label, indent level). Pages not listed here are still built, just not in the nav.
 NAV = [
@@ -291,7 +295,7 @@ def render_py(src: str) -> tuple[str, str]:
 def nav_html(cur: str) -> str:
     me = out_path(cur)
     parts = [f'<a class="brand" href="{rel(me, "index.html")}">deploy1020 · 技术笔记</a>']
-    for group, items in NAV:
+    for group, items in (NAV if PUBLISH_DOCS else []):
         if group:
             parts.append(f"<h4>{group}</h4>")
         for src, label, level in items:
@@ -303,7 +307,7 @@ def nav_html(cur: str) -> str:
             cls = " ".join(c for c in ("sub" if level else "", "on" if src == cur else "") if c)
             cls = f' class="{cls}"' if cls else ""
             parts.append(f'<a{cls} href="{rel(me, out_path(src))}">{label}</a>')
-    locked = encrypted_pages()
+    locked = published_notes()
     if locked:
         parts.append("<h4>笔记（需密码）</h4>")
         for d in locked:
@@ -359,6 +363,12 @@ def encrypted_pages() -> list[dict]:
         d["src"] = f"notes/{p.stem}.md"            # virtual source path -> notes/<slug>.html
         out.append(d)
     return out
+
+
+def published_notes() -> list[dict]:
+    """The notes that go on the site: all of them when documents are published, else the newest KEEP_NOTES."""
+    notes = encrypted_pages()
+    return notes if PUBLISH_DOCS else notes[-KEEP_NOTES:]
 
 
 def page_html(src, title, body, has_math, has_mermaid, footer, extra_js=""):
@@ -425,12 +435,16 @@ def build():
                + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
                + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src").rglob("*.md"))
                + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "src").rglob("*.py")
-                        if "__pycache__" not in p.parts))
+                        if "__pycache__" not in p.parts)) if PUBLISH_DOCS else []
+    if not PUBLISH_DOCS:                            # a bare index that lists the published notes
+        items = "\n".join(f"- [{d['nav']}]({out_path(d['src'])})" for d in reversed(published_notes()))
+        _, body = render_text(f"# 技术笔记\n\n最近的笔记（需要密码）：\n\n{items}\n", "README.md")
+        write("README.md", page_html("README.md", "技术笔记", body, False, False, ""))
     for src in sources:
         title, body = render_py(src) if src.endswith(".py") else render(src)
         write(src, page_html(src, title, body, 'class="arithmatex"' in body, 'class="mermaid"' in body,
                              f"源文件：<code>{src}</code>"))
-    locked = encrypted_pages()
+    locked = published_notes()
     for d in locked:
         payload = json.dumps({k: d[k] for k in ("salt", "iv", "iter", "ct")})
         body = (f"<h1 id=\"locked-title\">{html.escape(d['title'])}</h1>\n"
@@ -441,7 +455,8 @@ def build():
         extra = f"\n<script>window.LOCKED={payload};</script>\n<script>{LOCKED_JS}</script>"
         write(d["src"], page_html(d["src"], d["title"], body, True, False,
                                   "内容在浏览器里用密码解密（AES-GCM，PBKDF2-SHA256）", extra))
-    build_reports()
+    if PUBLISH_DOCS:
+        build_reports()
     (OUT / ".nojekyll").write_text("")
     (OUT / "robots.txt").write_text("User-agent: *\nDisallow: /\n")
     print(f"built {len(sources) + len(locked)} pages into {OUT} ({len(locked)} password-protected)")
