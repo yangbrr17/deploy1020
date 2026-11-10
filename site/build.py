@@ -24,7 +24,7 @@ import markdown
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "_site"
 # What goes on the public site. The documents, code pages and report theme stay in the repository but are not
-# published while PUBLISH_DOCS is False; only the newest KEEP_NOTES password-protected notes are.
+# published while PUBLISH_DOCS is False; only the password-protected notes of the newest KEEP_NOTES days are.
 PUBLISH_DOCS = False
 KEEP_NOTES = 3
 
@@ -368,9 +368,14 @@ def encrypted_pages() -> list[dict]:
 
 
 def published_notes() -> list[dict]:
-    """The notes that go on the site: all of them when documents are published, else the newest KEEP_NOTES."""
+    """The notes that go on the site: all of them when documents are published, else those of the newest
+    KEEP_NOTES days.  A slug starts with its day (MMDD); a second page of the same day is e.g. 1110b."""
     notes = encrypted_pages()
-    return notes if PUBLISH_DOCS else notes[-KEEP_NOTES:]
+    if PUBLISH_DOCS:
+        return notes
+    day = lambda d: Path(d["src"]).stem[:4]
+    keep = sorted({day(d) for d in notes})[-KEEP_NOTES:]
+    return [d for d in notes if day(d) in keep]
 
 
 def page_html(src, title, body, has_math, has_mermaid, footer, extra_js=""):

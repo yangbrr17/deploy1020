@@ -256,7 +256,7 @@
       cur = best; best.e.setAttribute('r', 6);
       var nr = node.getBoundingClientRect();
       showTip(tip, node, best.x * r.width / W + r.left - nr.left, best.y * r.width / W + r.top - nr.top - 30, function (t) {
-        h('div', 'h', t, S[best.k].name + ' · 第 ' + (best.i + 1) + ' 组');
+        h('div', 'h', t, S[best.k].name + (c.pt === false ? '' : ' · 第 ' + (best.i + 1) + ' 组'));
         tipRow(t, S[best.k].slot, fmt(best.p[1], c.d), c.yname || 'y');
         tipRow(t, S[best.k].slot, fmt(best.p[0], c.d), c.xname || 'x');
       });
@@ -267,7 +267,9 @@
   };
 
   App.prototype.rows = function (node, c, data, W, tip) {
-    var rows = data, rh = 30, labW = Math.min(230, Math.max(120, W * 0.36)), m = { l: labW, r: 52, t: 26, b: 26 };
+    var rows = data, narrow = W < 520, rh = narrow ? 46 : 30, need = 0;
+    rows.forEach(function (r) { var w = 16; for (var i = 0; i < r.name.length; i++) w += r.name.charCodeAt(i) > 255 ? 12.5 : 6.8; need = Math.max(need, w); });
+    var labW = narrow ? 12 : Math.min(need, W * 0.5), m = { l: labW, r: 52, t: 26, b: 26 };
     var H = m.t + rows.length * rh + m.b, lo = c.ref, hi = c.ref;
     rows.forEach(function (r) { lo = Math.min(lo, r.v); hi = Math.max(hi, r.v); });
     var pad = (hi - lo) * 0.1 || 0.05, xT = ticks(lo - pad, hi + pad, 5), x0 = Math.min(lo - pad, xT.v[0]), x1 = Math.max(hi + pad, xT.v[xT.v.length - 1]);
@@ -281,12 +283,13 @@
     el('line', { x1: xOf(c.ref), x2: xOf(c.ref), y1: m.t - 6, y2: H - m.b, stroke: 'var(--vmuted)', 'stroke-width': 1.5 }, svg);
     el('text', { x: xOf(c.ref), y: m.t - 10, 'text-anchor': 'middle', class: 'lab' }, svg, c.reflab || '');
     rows.forEach(function (r, i) {
-      var y = m.t + (i + 0.5) * rh, g = el('g', { tabindex: 0 }, svg);
-      el('text', { x: m.l - 12, y: y + 4, 'text-anchor': 'end', class: 'val' }, g, r.name);
+      var y = m.t + (i + (narrow ? 0.68 : 0.5)) * rh, g = el('g', { tabindex: 0 }, svg);
+      if (narrow) el('text', { x: 2, y: y - 14, class: 'val' }, g, r.name);
+      else el('text', { x: m.l - 12, y: y + 4, 'text-anchor': 'end', class: 'val' }, g, r.name);
       el('line', { x1: xOf(c.ref), x2: xOf(r.v), y1: y, y2: y, stroke: col(r.slot), 'stroke-width': 2, 'stroke-linecap': 'round', opacity: 0.45 }, g);
       var dot = el('circle', { cx: xOf(r.v), cy: y, r: 5, fill: col(r.slot), stroke: 'var(--bg)', 'stroke-width': 2 }, g);
       el('text', { x: Math.max(xOf(r.v), xOf(c.ref)) + 10, y: y + 4, class: 'val' }, g, fmt(r.v, c.d));
-      var hit = el('rect', { x: 0, y: y - rh / 2, width: W, height: rh, fill: 'transparent' }, g);
+      var hit = el('rect', { x: 0, y: m.t + i * rh, width: W, height: rh, fill: 'transparent' }, g);
       function on() { dot.setAttribute('r', 7); showTip(tip, node, xOf(r.v) + 17, y - 6, function (t) { h('div', 'h', t, r.name); tipRow(t, r.slot, fmt(r.v, c.d), c.vname || ''); }); }
       function off() { dot.setAttribute('r', 5); tip.style.display = 'none'; }
       hit.addEventListener('pointerenter', on); hit.addEventListener('pointerleave', off); g.addEventListener('focus', on); g.addEventListener('blur', off);
@@ -331,9 +334,10 @@
     } else if (c.type === 'xy') {
       h('th', '', tr, '组');
       keys.forEach(function (k) { h('th', '', tr, S[k].name + '：' + (c.xname || 'x')); h('th', '', tr, c.yname || 'y'); });
-      for (var i = 0; i < data[keys[0]].length; i++) {
+      var rowsN = Math.max.apply(null, keys.map(function (k) { return data[k].length; }));
+      for (var i = 0; i < rowsN; i++) {
         var x = h('tr', '', body); h('td', '', x, String(i + 1));
-        keys.forEach(function (k) { h('td', '', x, fmt(data[k][i][0], c.d)); h('td', '', x, fmt(data[k][i][1], c.d)); });
+        keys.forEach(function (k) { var q = data[k][i]; h('td', '', x, q ? fmt(q[0], c.d) : '—'); h('td', '', x, q ? fmt(q[1], c.d) : '—'); });
       }
     } else {
       h('th', '', tr, c.xname || ''); keys.forEach(function (k) { h('th', '', tr, S[k].name); });
