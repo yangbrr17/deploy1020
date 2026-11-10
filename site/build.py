@@ -335,6 +335,7 @@ document.addEventListener('DOMContentLoaded',function(){
       box.innerHTML=h;f.parentNode.removeChild(f);msg.textContent='';var t=document.getElementById('locked-title');if(t)t.parentNode.removeChild(t);
       document.querySelector('main').classList.remove('locked');
       if(window.enhancePage)window.enhancePage(box);
+      if(window.renderViz)window.renderViz(box);
       box.querySelectorAll('a[data-b64]').forEach(function(a){a.addEventListener('click',function(e){
         e.preventDefault();
         var url=URL.createObjectURL(new Blob([b64(a.getAttribute('data-b64'))],{type:a.getAttribute('data-type')||'application/octet-stream'}));
@@ -353,6 +354,7 @@ document.addEventListener('DOMContentLoaded',function(){
 """
 
 ENC_DIR = ROOT / "site" / "encrypted"
+VIZ_JS = (ROOT / "site" / "viz.js").read_text(encoding="utf8")   # charts inside unlocked pages; code only, no data
 
 
 def encrypted_pages() -> list[dict]:
@@ -452,7 +454,7 @@ def build():
                 '<input name="pw" type="password" autocomplete="current-password" placeholder="密码" aria-label="密码"> '
                 '<button type="submit">打开</button></form>\n'
                 '<p id="unlock-msg" class="muted"></p>\n<div id="content"></div>')
-        extra = f"\n<script>window.LOCKED={payload};</script>\n<script>{LOCKED_JS}</script>"
+        extra = f"\n<script>window.LOCKED={payload};</script>\n<script>{VIZ_JS}</script>\n<script>{LOCKED_JS}</script>"
         write(d["src"], page_html(d["src"], d["title"], body, True, False,
                                   "内容在浏览器里用密码解密（AES-GCM，PBKDF2-SHA256）", extra))
     if PUBLISH_DOCS:
