@@ -89,13 +89,28 @@ table{border-collapse:collapse;width:100%;font-size:14.5px;margin:1rem 0}
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
 th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
 th{background:var(--panel)}
-code{background:var(--code);padding:.1em .35em;border-radius:4px;font-size:.9em;overflow-wrap:anywhere}
-pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto;font-size:13.5px;line-height:1.55;margin:0}
-pre code{background:none;padding:0;overflow-wrap:normal}
-pre.mermaid{background:var(--panel);text-align:center;margin:1rem 0}
-.cb{position:relative;margin:1rem 0}
-.cb .lang{position:absolute;top:6px;left:12px;font-size:11.5px;color:var(--muted);font-family:ui-monospace,monospace}
-.cb.has-lang pre{padding-top:28px}
+/* code: one monospace stack, an editor-like block with a header bar, and syntax colours for Pygments tokens */
+:root{--mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code","Cascadia Mono",Menlo,Consolas,"Liberation Mono","DejaVu Sans Mono",monospace;
+--cbg:#f6f8fa;--chead:#eaeef2;--cink:#1f2328;--kw:#0033b3;--st:#067d17;--nu:#1750eb;--co:#6e7781;--fn:#00627a;--bi:#8250df;--de:#9a6700}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--cbg:#1e1f22;--chead:#2b2d30;--cink:#bcbec4;--kw:#cf8e6d;--st:#6aab73;--nu:#2aacb8;--co:#7a7e85;--fn:#56a8f5;--bi:#a9a0e8;--de:#b3ae60}}
+:root[data-theme="dark"]{--cbg:#1e1f22;--chead:#2b2d30;--cink:#bcbec4;--kw:#cf8e6d;--st:#6aab73;--nu:#2aacb8;--co:#7a7e85;--fn:#56a8f5;--bi:#a9a0e8;--de:#b3ae60}
+code{font-family:var(--mono);background:var(--code);padding:.1em .35em;border-radius:4px;font-size:.88em;overflow-wrap:anywhere}
+pre,code{font-variant-ligatures:none}
+pre{font-family:var(--mono);background:var(--cbg);color:var(--cink);padding:12px 16px;overflow:auto;max-height:640px;font-size:13px;line-height:1.6;margin:0;tab-size:4;-webkit-text-size-adjust:100%}
+pre code{font-family:inherit;font-size:inherit;background:none;padding:0;overflow-wrap:normal}
+pre.mermaid{font-family:inherit;max-height:none;background:var(--panel);text-align:center;margin:1rem 0}
+.highlight{margin:0}
+.cb{margin:1.1rem 0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--cbg)}
+.cb .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 8px 5px 16px;background:var(--chead);border-bottom:1px solid var(--line);font:12px/1.6 var(--mono);color:var(--muted)}
+.cb .copy{position:static;opacity:1;background:var(--bg);font-family:inherit}
+.highlight .k,.highlight .kn,.highlight .kd,.highlight .kc,.highlight .kr,.highlight .kp,.highlight .kt,.highlight .ow{color:var(--kw)}
+.highlight .s,.highlight .s1,.highlight .s2,.highlight .sa,.highlight .sb,.highlight .sc,.highlight .dl,.highlight .se,.highlight .sh,.highlight .si,.highlight .sx,.highlight .sr,.highlight .ss{color:var(--st)}
+.highlight .sd{color:var(--st);font-style:italic}
+.highlight .c,.highlight .c1,.highlight .cm,.highlight .ch,.highlight .cs,.highlight .cp,.highlight .cpf{color:var(--co);font-style:italic}
+.highlight .m,.highlight .mi,.highlight .mf,.highlight .mh,.highlight .mo,.highlight .mb,.highlight .il{color:var(--nu)}
+.highlight .nf,.highlight .fm,.highlight .nc,.highlight .ne{color:var(--fn)}
+.highlight .nb,.highlight .bp{color:var(--bi)}
+.highlight .nd{color:var(--de)}
 .copy{position:absolute;top:6px;right:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:1px 9px;font-size:12px;cursor:pointer;opacity:.85}
 .copy:hover{opacity:1;border-color:var(--accent)}
 .math{position:relative;margin:1rem 0;padding:6px 0;overflow-x:auto;overflow-y:hidden}
@@ -131,12 +146,17 @@ function copyText(t,btn){
 }
 function button(label,get){var b=document.createElement('button');b.type='button';b.className='copy';b.textContent=label;b.onclick=function(){copyText(get(),b)};return b}
 function enhance(root){
+  var langs={python:'Python',py:'Python',text:'文本',bash:'Shell',sh:'Shell',json:'JSON',js:'JavaScript',javascript:'JavaScript',yaml:'YAML',sql:'SQL',latex:'LaTeX'};
   root.querySelectorAll('pre > code').forEach(function(c){
-    var pre=c.parentNode,w=document.createElement('div');w.className='cb';
-    var m=(c.className||'').match(/language-([\w+-]+)/);
-    pre.parentNode.insertBefore(w,pre);w.appendChild(pre);
-    if(m){var l=document.createElement('span');l.className='lang';l.textContent=m[1];w.appendChild(l);w.classList.add('has-lang')}
-    w.appendChild(button('复制',function(){return c.textContent}));
+    var pre=c.parentNode,host=pre.parentNode&&pre.parentNode.classList.contains('highlight')?pre.parentNode:pre;
+    var w=document.createElement('div');w.className='cb';
+    var m=((c.className||'')+' '+(host.className||'')).match(/language-([\w+-]+)/);
+    var n=c.textContent.replace(/\n+$/,'').split('\n').length;
+    host.parentNode.insertBefore(w,host);
+    var bar=document.createElement('div');bar.className='bar';
+    var l=document.createElement('span');l.textContent=(m?(langs[m[1]]||m[1]):'代码')+' · '+n+' 行';
+    bar.appendChild(l);bar.appendChild(button('复制',function(){return c.textContent}));
+    w.appendChild(bar);w.appendChild(host);
   });
   root.querySelectorAll('div.arithmatex').forEach(function(d){
     var src=d.textContent.trim().replace(/^\\\[/,'').replace(/\\\]$/,'').trim();
@@ -236,8 +256,9 @@ def render_text(text: str, src: str) -> tuple[str, str]:
     text = normalize_lists(text)
     md = markdown.Markdown(extensions=[
         "tables", "toc", "sane_lists",
-        "pymdownx.arithmatex", "pymdownx.superfences",
+        "pymdownx.arithmatex", "pymdownx.highlight", "pymdownx.superfences",
     ], extension_configs={
+        "pymdownx.highlight": {"pygments_lang_class": True, "guess_lang": False},   # colours need Pygments installed
         "pymdownx.arithmatex": {"generic": True},
         "pymdownx.superfences": {"custom_fences": [
             {"name": "mermaid", "class": "mermaid",
