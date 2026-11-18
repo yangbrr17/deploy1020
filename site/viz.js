@@ -229,7 +229,8 @@
     function xOf(v) { return m.l + (v - x0) / (x1 - x0) * pw; }
     function yOf(v) { return m.t + (1 - (v - y0) / (y1 - y0)) * ph; }
     var svg = frame(node, W, H, m, yT, yOf, c);
-    xT.v.forEach(function (t) {
+    if (c.xticks) c.xticks.forEach(function (q) { if (q[0] >= x0 && q[0] <= x1) el('text', { x: xOf(q[0]), y: H - m.b + 18, 'text-anchor': 'middle' }, svg, q[1]); });
+    else xT.v.forEach(function (t) {
       if (Math.abs(t) < 1e-12) el('line', { x1: xOf(t), x2: xOf(t), y1: m.t, y2: H - m.b, stroke: 'var(--vaxis)', 'stroke-width': 1.5 }, svg);
       el('text', { x: xOf(t), y: H - m.b + 18, 'text-anchor': 'middle' }, svg, fmt(t, xT.d));
     });
@@ -238,12 +239,12 @@
       el('line', { x1: xOf(a), y1: yOf(a), x2: xOf(b), y2: yOf(b), stroke: 'var(--vmuted)', 'stroke-width': 1 }, svg);
       el('text', { x: xOf(b) - 4, y: yOf(b) + 14, 'text-anchor': 'end', class: 'lab' }, svg, c.diag);
     }
-    var pts = [];
+    var pts = [], R0 = c.r || 4;
     shown.forEach(function (k) {
       var d = data[k].map(function (p, i) { return (i ? 'L' : 'M') + xOf(p[0]).toFixed(1) + ' ' + yOf(p[1]).toFixed(1); }).join('');
-      el('path', { d: d, fill: 'none', stroke: col(S[k].slot), 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+      if (c.line !== false) el('path', { d: d, fill: 'none', stroke: col(S[k].slot), 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
       data[k].forEach(function (p, i) {
-        var e = el('circle', { cx: xOf(p[0]), cy: yOf(p[1]), r: 4, fill: col(S[k].slot), stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+        var e = el('circle', { cx: xOf(p[0]), cy: yOf(p[1]), r: R0, fill: col(S[k].slot), stroke: 'var(--bg)', 'stroke-width': c.line === false ? 0.6 : 2, 'fill-opacity': c.line === false ? 0.6 : 1 }, svg);
         pts.push({ k: k, p: p, i: i, x: xOf(p[0]), y: yOf(p[1]), e: e });
       });
     });
@@ -252,17 +253,18 @@
       var r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width, py = (ev.clientY - r.top) * W / r.width, best, bd = 1e18;
       pts.forEach(function (q) { var dd = (q.x - px) * (q.x - px) + (q.y - py) * (q.y - py); if (dd < bd) { bd = dd; best = q; } });
       if (!best) return;
-      if (cur) cur.e.setAttribute('r', 4);
-      cur = best; best.e.setAttribute('r', 6);
+      if (cur) cur.e.setAttribute('r', R0);
+      cur = best; best.e.setAttribute('r', R0 + 2);
       var nr = node.getBoundingClientRect();
       showTip(tip, node, best.x * r.width / W + r.left - nr.left, best.y * r.width / W + r.top - nr.top - 30, function (t) {
         h('div', 'h', t, S[best.k].name + (c.pt === false ? '' : ' · 第 ' + (best.i + 1) + ' 组'));
+        if (best.p[2] != null) { h('div', 'h', t, String(best.p[2])); return; }
         tipRow(t, S[best.k].slot, fmt(best.p[1], c.d), c.yname || 'y');
         tipRow(t, S[best.k].slot, fmt(best.p[0], c.d), c.xname || 'x');
       });
     }
     hit.addEventListener('pointermove', move); hit.addEventListener('pointerdown', move);
-    hit.addEventListener('pointerleave', function () { tip.style.display = 'none'; if (cur) cur.e.setAttribute('r', 4); });
+    hit.addEventListener('pointerleave', function () { tip.style.display = 'none'; if (cur) cur.e.setAttribute('r', R0); });
     return svg;
   };
 
